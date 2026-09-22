@@ -81,6 +81,12 @@
   </section>
   <section id="page-discovery" class="workflow-page" role="tabpanel" aria-labelledby="tab-discovery" hidden="hidden">
     <p>在 Zotero 主窗口选择一篇或多篇种子论文，查找其参考文献、后续引用和 OpenAlex 相关论文。</p>
+    <div class="openalex-settings toolbar">
+      <label class="grow">OpenAlex API Key（可选） <input id="openalex-key" type="password" autocomplete="off" placeholder="匿名访问可留空" /></label>
+      <button id="openalex-save">保存 Key</button><button id="openalex-clear">清除 Key</button>
+      <span id="openalex-quota" class="hint">尚未读取额度。</span>
+    </div>
+    <p class="hint">免费 Key 可提高每日额度；Key 仅保存在本机 Zotero 配置中。修改后点击“保存 Key”。</p>
     <div class="toolbar"><button id="discover" class="primary">扩展相关文献</button>
       <label>关系 <select id="discovery-relation"><option value="">全部</option><option value="reference">参考文献</option><option value="citation">后续引用</option><option value="related">相关论文</option></select></label>
       <button id="discovery-select">选中当前结果</button><button id="discovery-clear">清空选择</button>

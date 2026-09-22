@@ -14,6 +14,17 @@ const work=(id,title,changes={})=>({id:`https://openalex.org/${id}`,doi:null,tit
 const seedItem=()=>({isRegularItem:()=>true,deleted:false,getField:key=>({title:'Seed Paper',DOI:'10.1000/seed',extra:'',date:'2025'}[key]||''),getCreators:()=>[]});
 const Zotero={CreatorTypes:{getID:()=>1}};
 
+test('OpenAlex API key is scoped to its official host and rate headers are parsed',()=>{
+  const request=service.apiRequest('https://api.openalex.org/works/W1?select=id',' secret key ');
+  assert.equal(new URL(request.url).searchParams.has('api_key'),false);
+  assert.equal(request.headers.Authorization,'Bearer secret key');
+  assert.throws(()=>service.apiRequest('https://example.org/works','secret'),/地址无效/);
+  const headers=new Map([['x-ratelimit-limit','10000'],['x-ratelimit-remaining','9990'],['x-ratelimit-reset','42']]);
+  const rate=service.rateLimit({getResponseHeader:name=>headers.get(name.toLowerCase())});
+  assert.equal(`${rate.limit},${rate.remaining},${rate.reset}`,'10000,9990,42');
+  assert.equal(service.rateLimit({getResponseHeader:()=>null}),null);
+});
+
 test('seed expansion merges citation relations, explains seeds and excludes seeds',async()=>{
   const seed=work('W1','Seed Paper',{doi:'https://doi.org/10.1000/seed',referenced_works:['https://openalex.org/W2'],related_works:['https://openalex.org/W3']});
   const requests=[];

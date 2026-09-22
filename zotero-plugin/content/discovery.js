@@ -2,6 +2,19 @@
 var Search4PaperDiscovery = {
   fields: "id,doi,title,publication_year,type,authorships,abstract_inverted_index,primary_location,cited_by_count,referenced_works,related_works,best_oa_location",
 
+  apiRequest(value, apiKey = "") {
+    const url = new URL(value);
+    if (url.hostname !== "api.openalex.org") throw new Error("OpenAlex 请求地址无效。");
+    const key = String(apiKey).trim();
+    return { url: url.href, headers: key ? { Authorization: `Bearer ${key}` } : {} };
+  },
+
+  rateLimit(response) {
+    const read = name => response?.getResponseHeader?.(name) || null;
+    const limit = read("X-RateLimit-Limit"), remaining = read("X-RateLimit-Remaining");
+    return limit && remaining ? { limit, remaining, reset: read("X-RateLimit-Reset") } : null;
+  },
+
   normalize(value) {
     return String(value || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   },

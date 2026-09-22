@@ -6,6 +6,7 @@ var Search4PaperUI = {
   activePage: "search", operationPage: null,
   papers: [], candidates: [], selected: new Set(), active: null,
   discoveryPapers: [], discoverySeeds: [], discoverySelected: new Set(), discoveryActive: null,
+  openAlexRate: null,
   page: 0, pageSize: 100, busy: false, controller: null, query: null, loadedTargets: [], coverageRows: [], filtersDirty: true,
   labels: { title: "标题", abstract: "摘要", keywords: "关键词", tldr: "TLDR" },
   $(id) { return document.getElementById(id); },
@@ -135,23 +136,32 @@ var Search4PaperUI = {
   },
   async request(url, signal, responseType = "json") {
     signal.throwIfAborted();
+    const openAlex = URL.canParse(url) && new URL(url).hostname === "api.openalex.org";
+    const openAlexRequest = openAlex ? Search4PaperDiscovery.apiRequest(url,
+      this.Zotero.Prefs.get("extensions.search4paper.openAlexAPIKey", true) || "") : null;
+    const requestURL = openAlexRequest?.url || url;
     let cancel;
     const abort = () => cancel?.();
     signal.addEventListener("abort", abort, { once: true });
     try {
-      const response = await this.Zotero.HTTP.request("GET", url, {
+      const response = await this.Zotero.HTTP.request("GET", requestURL, {
         // Official proceedings XML/program files can exceed 10 MB on a slow connection.
         responseType, timeout: url.startsWith("https://api2.openreview.net/") ? 60000 : 300000,
         errorDelayMax: 0, noRetryOnThrottle: true,
         // A live ICML page at offset 5000 returned a cached empty response;
         // Cache-Control: no-cache returned the complete page and correct total.
-        noCache: true, headers: { "Cache-Control": "no-cache" },
+        noCache: true, headers: { "Cache-Control": "no-cache", ...openAlexRequest?.headers },
         cancellerReceiver(fn) { cancel = fn; if (signal.aborted) fn(); }
       });
+      if (openAlex) {
+        this.openAlexRate = Search4PaperDiscovery.rateLimit(response);
+        this.updateOpenAlexQuota();
+      }
       return response.response;
     }
     catch (error) {
       signal.throwIfAborted();
+      if (openAlex && error.status === 429) throw new Error("OpenAlex API 今日额度已用尽或请求过快（HTTP 429）。请配置免费 API Key，或等待额度在 UTC 00:00 重置。");
       throw new Error(`论文来源请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${url}\n${error.status === 404 ? "该会议年份的官方数据尚不可用。" : error.message}`);
     }
     finally { signal.removeEventListener("abort", abort); }
@@ -352,6 +362,21 @@ var Search4PaperUI = {
   discoveryVisible() {
     const relation = this.$("discovery-relation").value;
     return relation ? this.discoveryPapers.filter(paper => paper.relations.includes(relation)) : this.discoveryPapers;
+  },
+  updateOpenAlexQuota() {
+    const target = this.$("openalex-quota");
+    if (!target) return;
+    const keyed = Boolean(this.Zotero.Prefs.get("extensions.search4paper.openAlexAPIKey", true));
+    target.textContent = this.openAlexRate
+      ? `${keyed ? "API Key" : "匿名访问"} · 今日剩余额度 ${this.openAlexRate.remaining} / ${this.openAlexRate.limit}`
+      : `${keyed ? "已配置 API Key" : "匿名访问"} · 尚未读取额度`;
+  },
+  saveOpenAlexKey() {
+    const key = this.$("openalex-key").value.trim();
+    this.Zotero.Prefs.set("extensions.search4paper.openAlexAPIKey", key, true);
+    this.$("openalex-key").value = "";
+    this.openAlexRate = null; this.updateOpenAlexQuota();
+    this.status(key ? "OpenAlex API Key 已保存到本机 Zotero 配置。" : "已切换为 OpenAlex 匿名访问。");
   },
   async discover(signal) {
     const items = [...(this.Zotero.getActiveZoteroPane()?.getSelectedItems() || [])];
@@ -570,6 +595,8 @@ var Search4PaperUI = {
       if (this.operationPage === "fulltext") this.controller?.abort();
     });
     this.$("discover").addEventListener("click", () => this.operation(signal => this.discover(signal)));
+    this.$("openalex-save").addEventListener("click", () => this.saveOpenAlexKey());
+    this.$("openalex-clear").addEventListener("click", () => { this.$("openalex-key").value = ""; this.saveOpenAlexKey(); });
     this.$("discovery-cancel").addEventListener("click", () => { if (this.operationPage === "discovery") this.controller?.abort(); });
     this.$("discovery-relation").addEventListener("change", () => this.renderDiscovery());
     this.$("discovery-select").addEventListener("click", () => { for (const paper of this.discoveryVisible()) this.discoverySelected.add(paper.id); this.renderDiscovery(); });
@@ -612,6 +639,7 @@ var Search4PaperUI = {
     const selected = this.Zotero.getActiveZoteroPane()?.getSelectedCollections() || [];
     if (selected.length === 1 && selected[0].libraryID === this.Zotero.Libraries.userLibraryID) this.$("collection").value = String(selected[0].id);
     this.updateQuerySummary();
+    this.updateOpenAlexQuota();
     this.controls();
   }
 };
