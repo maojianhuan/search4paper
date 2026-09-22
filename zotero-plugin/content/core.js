@@ -375,6 +375,7 @@ var Search4PaperCore = (() => {
       if (doi) keys.add("doi:" + doi);
     };
     addDOI(data.doi);
+    if (/^W\d+$/.test(data.openalexID || "")) keys.add("openalex:" + data.openalexID);
     if (data.id) keys.add(data.source && data.source !== "openreview"
       ? `source:${data.source}:${data.id}` : "openreview:" + data.id);
     if (data.url && URL.canParse(data.url)) {
@@ -396,6 +397,7 @@ var Search4PaperCore = (() => {
     for (const line of (data.extra || "").split("\n")) {
       if (line.startsWith("OpenReview ID: ")) keys.add("openreview:" + line.slice(15).trim());
       if (line.startsWith("DOI: ")) addDOI(line.slice(5));
+      if (/^OpenAlex ID: W\d+$/.test(line)) keys.add("openalex:" + line.slice(13).trim());
       if (/^Source ID: (aaai|acl|cvf|ecva|iacr|icde|sigmod|kdd|sigir|vldb|fast|nsdi|osdi|usenix-security|ccs|ndss|sigcomm|fse):/.test(line)) keys.add("source:" + line.slice(11).trim());
     }
     return keys;
@@ -437,6 +439,6 @@ var Search4PaperCore = (() => {
   }
 
   return { FIELDS, SYSTEMS_SOURCES, DATABASE_SOURCES, CONFERENCES, CONFERENCE_CATEGORIES, filterConferences, OPENREVIEW_CONFERENCES, CONFERENCE_NAMES, sourceName, venueID, words, phraseMatches, splitTerms, validateQuery, matchPaper, normalizeNote,
-    validateYear, validateMetadata, fetchAccepted, identities, evidenceNote };
+    validateYear, validateMetadata, fetchAccepted, identities, evidenceNote, escapeHTML };
 })();
 if (typeof module !== "undefined") module.exports = Search4PaperCore;

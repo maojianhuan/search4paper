@@ -14,12 +14,14 @@
   <script src="publication.js"></script>
   <script src="openreview.js"></script>
   <script src="abstract.js"></script>
+  <script src="discovery.js"></script>
   <script src="search.js" defer="defer"></script>
 </head>
 <body>
   <header><h1 id="page-title">论文检索</h1><span>search4paper</span></header>
   <nav class="toolbar" role="tablist" aria-label="工作流程">
     <button id="tab-search" role="tab" aria-controls="page-search" aria-selected="true">论文检索</button>
+    <button id="tab-discovery" role="tab" aria-controls="page-discovery" aria-selected="false" tabindex="-1">相关文献</button>
     <button id="tab-fulltext" role="tab" aria-controls="page-fulltext" aria-selected="false" tabindex="-1">全文获取</button>
   </nav>
   <section id="page-search" class="workflow-page" role="tabpanel" aria-labelledby="tab-search">
@@ -76,6 +78,23 @@
   </section>
   <footer><button id="import" class="primary" disabled="disabled">导入选中论文</button></footer>
   <p id="status" class="operation-status" role="status" aria-live="polite">就绪</p>
+  </section>
+  <section id="page-discovery" class="workflow-page" role="tabpanel" aria-labelledby="tab-discovery" hidden="hidden">
+    <p>在 Zotero 主窗口选择一篇或多篇种子论文，查找其参考文献、后续引用和 OpenAlex 相关论文。</p>
+    <div class="toolbar"><button id="discover" class="primary">扩展相关文献</button>
+      <label>关系 <select id="discovery-relation"><option value="">全部</option><option value="reference">参考文献</option><option value="citation">后续引用</option><option value="related">相关论文</option></select></label>
+      <button id="discovery-select">选中当前结果</button><button id="discovery-clear">清空选择</button>
+      <button id="discovery-import" disabled="disabled">导入到主窗口当前集合</button>
+      <button id="discovery-cancel" disabled="disabled">取消</button></div>
+    <p id="discovery-summary" class="coverage">尚未扩展种子论文。</p>
+    <div class="workspace">
+      <section class="candidates"><div class="table-scroll"><table><thead><tr><th>选择</th><th>相关论文 / 推荐原因</th></tr></thead><tbody id="discovery-results"></tbody></table>
+        <p id="discovery-empty">点击“扩展相关文献”开始。</p></div></section>
+      <section class="preview"><h2 id="discovery-title">论文预览</h2><p id="discovery-authors" class="hint"></p>
+        <p><button id="discovery-source" disabled="disabled">打开论文来源</button></p><h3>摘要</h3><p id="discovery-abstract">选择一篇相关论文。</p>
+        <h3>推荐依据</h3><ul id="discovery-reasons"></ul></section>
+    </div>
+    <p id="discovery-status" class="operation-status" role="status" aria-live="polite">就绪</p>
   </section>
   <section id="page-fulltext" class="workflow-page" role="tabpanel" aria-labelledby="tab-fulltext" hidden="hidden">
     <p>在 Zotero 主窗口选中文献，再点击“获取全文”。</p>

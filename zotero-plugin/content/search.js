@@ -5,6 +5,7 @@ var Search4PaperUI = {
   acm: window.arguments[0].acmSession,
   activePage: "search", operationPage: null,
   papers: [], candidates: [], selected: new Set(), active: null,
+  discoveryPapers: [], discoverySeeds: [], discoverySelected: new Set(), discoveryActive: null,
   page: 0, pageSize: 100, busy: false, controller: null, query: null, loadedTargets: [], coverageRows: [], filtersDirty: true,
   labels: { title: "标题", abstract: "摘要", keywords: "关键词", tldr: "TLDR" },
   $(id) { return document.getElementById(id); },
@@ -38,23 +39,25 @@ var Search4PaperUI = {
   paperKey(paper) { return `${paper.venueID}:${paper.id}`; },
   switchPage(page) {
     this.activePage = page;
-    for (const name of ["search", "fulltext"]) {
+    for (const name of ["search", "discovery", "fulltext"]) {
       this.$("page-" + name).hidden = name !== page;
       this.$("tab-" + name).setAttribute("aria-selected", String(name === page));
       this.$("tab-" + name).tabIndex = name === page ? 0 : -1;
     }
-    this.$("page-title").textContent = page === "search" ? "论文检索" : "全文获取";
+    this.$("page-title").textContent = page === "search" ? "论文检索" : page === "discovery" ? "相关文献" : "全文获取";
   },
   status(text, error = false) {
-    const id = (this.operationPage || this.activePage) === "fulltext" ? "fulltext-status" : "status";
+    const page = this.operationPage || this.activePage;
+    const id = page === "fulltext" ? "fulltext-status" : page === "discovery" ? "discovery-status" : "status";
     this.$(id).textContent = text;
     this.$(id).classList.toggle("error", error);
   },
   controls() {
     for (const element of document.querySelectorAll("input, select, button")) element.disabled = this.busy;
-    this.$("tab-search").disabled = this.$("tab-fulltext").disabled = false;
+    this.$("tab-search").disabled = this.$("tab-discovery").disabled = this.$("tab-fulltext").disabled = false;
     this.$("cancel").disabled = !this.busy || this.operationPage !== "search";
     this.$("fulltext-cancel").disabled = !this.busy || this.operationPage !== "fulltext";
+    this.$("discovery-cancel").disabled = !this.busy || this.operationPage !== "discovery";
     if (this.busy) return;
     const noConference = !this.selectedConferences().length;
     this.$("conference").disabled = noConference;
@@ -69,6 +72,8 @@ var Search4PaperUI = {
     this.$("previous").disabled = this.page === 0;
     this.$("next").disabled = (this.page + 1) * this.pageSize >= this.candidates.length;
     this.$("source").disabled = !this.active;
+    this.$("discovery-import").disabled = !this.discoverySelected.size;
+    this.$("discovery-source").disabled = !this.discoveryActive;
   },
   updateConferenceOptions() {
     const select = this.$("conference"), previous = new Set(this.selectedConferences());
@@ -344,6 +349,71 @@ var Search4PaperUI = {
     const failures = results.filter(result => result.error);
     this.status(`摘要补全：成功 ${success}，失败 ${failures.length}，写回已有 Zotero 条目 ${written}。${failures.length ? "\n" + failures.map(result => `${result.paper.title}：${result.error}`).join("\n") : ""}`, Boolean(failures.length));
   },
+  discoveryVisible() {
+    const relation = this.$("discovery-relation").value;
+    return relation ? this.discoveryPapers.filter(paper => paper.relations.includes(relation)) : this.discoveryPapers;
+  },
+  async discover(signal) {
+    const items = [...(this.Zotero.getActiveZoteroPane()?.getSelectedItems() || [])];
+    this.discoveryPapers = []; this.discoverySeeds = []; this.discoverySelected.clear(); this.discoveryActive = null;
+    this.renderDiscovery();
+    const result = await Search4PaperDiscovery.expand(items, this.Zotero, {
+      signal, request: (url, requestSignal, type) => this.request(url, requestSignal, type),
+      onProgress: message => this.status(message)
+    });
+    signal.throwIfAborted();
+    this.discoverySeeds = result.seeds; this.discoveryPapers = result.papers;
+    this.renderDiscovery(); this.previewDiscovery(result.papers[0] || null);
+    const count = relation => result.papers.filter(paper => paper.relations.includes(relation)).length;
+    this.$("discovery-summary").textContent = `种子 ${result.seeds.length} 篇 · 相关结果 ${result.papers.length} 篇 · 参考文献 ${count("reference")} · 后续引用 ${count("citation")} · 相关论文 ${count("related")}。参考文献完整分批读取；后续引用按每篇种子的引用数排序，最多取 ${result.citationLimitPerSeed} 篇。`;
+    this.status("相关文献扩展完成。可按关系筛选并选择导入。", false);
+  },
+  renderDiscovery() {
+    const tbody = this.$("discovery-results"), papers = this.discoveryVisible(); tbody.replaceChildren();
+    const labels = { reference: "参考文献", citation: "后续引用", related: "相关论文" };
+    for (const paper of papers) {
+      const tr = document.createElementNS("http://www.w3.org/1999/xhtml", "tr"); tr.dataset.id = paper.id;
+      tr.classList.toggle("active", this.discoveryActive?.id === paper.id);
+      const choice = document.createElementNS("http://www.w3.org/1999/xhtml", "td");
+      const checkbox = document.createElementNS("http://www.w3.org/1999/xhtml", "input"); checkbox.type = "checkbox";
+      checkbox.checked = this.discoverySelected.has(paper.id); checkbox.setAttribute("aria-label", `选择 ${paper.title}`);
+      checkbox.addEventListener("change", () => { if (checkbox.checked) this.discoverySelected.add(paper.id); else this.discoverySelected.delete(paper.id); this.controls(); });
+      choice.append(checkbox);
+      const text = document.createElementNS("http://www.w3.org/1999/xhtml", "td");
+      const title = document.createElementNS("http://www.w3.org/1999/xhtml", "button"); title.className = "paper-button"; title.textContent = paper.title;
+      title.addEventListener("click", () => this.previewDiscovery(paper));
+      const reason = document.createElementNS("http://www.w3.org/1999/xhtml", "span"); reason.className = "match-fields";
+      reason.textContent = `${paper.year || "年份未知"} · 引用 ${paper.citedByCount} · ${paper.relations.map(value => labels[value]).join(" / ")} · 关联 ${paper.seedTitles.length} 篇种子`;
+      text.append(title, reason); tr.append(choice, text); tbody.append(tr);
+    }
+    this.$("discovery-empty").hidden = papers.length > 0;
+    this.$("discovery-empty").textContent = this.discoveryPapers.length ? "当前关系筛选下没有论文。" : "点击“扩展相关文献”开始。";
+    this.controls();
+  },
+  previewDiscovery(paper) {
+    this.discoveryActive = paper;
+    this.$("discovery-title").textContent = paper?.title || "论文预览";
+    this.$("discovery-authors").textContent = paper ? `${paper.authors.join("; ")}${paper.publicationTitle ? ` · ${paper.publicationTitle}` : ""}` : "";
+    this.$("discovery-abstract").textContent = paper?.abstract || (paper ? "OpenAlex 未提供摘要。" : "选择一篇相关论文。");
+    this.$("discovery-reasons").replaceChildren();
+    const labels = { reference: "是种子论文的参考文献", citation: "引用了种子论文", related: "OpenAlex 判定为相关论文" };
+    for (const relation of paper?.relations || []) {
+      const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li"); li.textContent = `${labels[relation]}：${paper.seedTitles.join("；")}`; this.$("discovery-reasons").append(li);
+    }
+    for (const row of this.$("discovery-results").children) row.classList.toggle("active", row.dataset.id === paper?.id);
+    this.controls();
+  },
+  async importDiscovery(signal) {
+    const papers = this.discoveryPapers.filter(paper => this.discoverySelected.has(paper.id));
+    if (!papers.length) throw new Error("请先选择需要导入的相关论文。");
+    const collections = this.Zotero.getActiveZoteroPane()?.getSelectedCollections() || [];
+    const collectionID = collections.length === 1 && collections[0].libraryID === this.Zotero.Libraries.userLibraryID ? collections[0].id : null;
+    const outcome = await Search4PaperDiscovery.importPapers(this.Zotero, papers, { collectionID, signal,
+      onProgress: (done, total, title) => this.status(`导入相关论文 ${done} / ${total}：${title}`) });
+    const count = status => outcome.results.filter(result => result.status === status).length;
+    const failure = outcome.results.find(result => result.error);
+    this.status(`相关文献导入：新增 ${count("created")}，已有 ${count("existing")}，失败 ${count("failed")}，未处理 ${outcome.unprocessed}。${failure ? `\n${failure.paper.title}：${failure.error}` : ""}`, Boolean(failure));
+  },
   async getFullText(signal) {
     const items = [...(this.Zotero.getActiveZoteroPane()?.getSelectedItems() || [])];
     if (!items.length) throw new Error("请先在 Zotero 主窗口选择需要全文的文献条目。");
@@ -472,13 +542,16 @@ var Search4PaperUI = {
     this.$("acm-status").textContent = this.acm.status;
   },
   init() {
-    for (const page of ["search", "fulltext"]) {
+    const pages = ["search", "discovery", "fulltext"];
+    for (const page of pages) {
       const tab = this.$("tab-" + page);
       tab.addEventListener("click", () => this.switchPage(page));
       tab.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const next = event.key === "Home" ? "search" : event.key === "End" ? "fulltext" : page === "search" ? "fulltext" : "search";
+        const index = pages.indexOf(page);
+        const next = event.key === "Home" ? pages[0] : event.key === "End" ? pages.at(-1)
+          : pages[(index + (event.key === "ArrowRight" ? 1 : pages.length - 1)) % pages.length];
         this.switchPage(next); this.$("tab-" + next).focus();
       });
     }
@@ -496,6 +569,13 @@ var Search4PaperUI = {
     this.$("fulltext-cancel").addEventListener("click", () => {
       if (this.operationPage === "fulltext") this.controller?.abort();
     });
+    this.$("discover").addEventListener("click", () => this.operation(signal => this.discover(signal)));
+    this.$("discovery-cancel").addEventListener("click", () => { if (this.operationPage === "discovery") this.controller?.abort(); });
+    this.$("discovery-relation").addEventListener("change", () => this.renderDiscovery());
+    this.$("discovery-select").addEventListener("click", () => { for (const paper of this.discoveryVisible()) this.discoverySelected.add(paper.id); this.renderDiscovery(); });
+    this.$("discovery-clear").addEventListener("click", () => { this.discoverySelected.clear(); this.renderDiscovery(); });
+    this.$("discovery-import").addEventListener("click", () => this.operation(signal => this.importDiscovery(signal)));
+    this.$("discovery-source").addEventListener("click", () => this.Zotero.launchURL(this.discoveryActive.url));
     for (const field of new Set(Object.values(Search4PaperCore.CONFERENCE_CATEGORIES).map(venue => venue.field))) {
       this.$("venue-field").add(new Option(field, field));
     }

@@ -10,6 +10,7 @@
 
 - **论文检索**：会议支持多选，年份支持分号列表或范围（例如 `2024; 2025`、`2024-2026`）；插件分别验证和缓存每个会议/年份，再合并检索，任一范围失败时不发布不完整结果。关键词以分号分隔，AND 全部满足，OR 任一满足。点击标题预览，勾选论文后可补全摘要或导入目标集合。
 - **摘要补全**：仅处理选中且缺少摘要的论文，依次使用精确 OpenReview ID 和 Semantic Scholar。Semantic Scholar 必须满足规范化标题完全一致、作者证据、年份一致且候选唯一。结果写回本地会议缓存；若 Zotero 中存在唯一对应条目且原摘要为空，也写入条目。现有摘要不会被覆盖。
+- **相关文献**：在 Zotero 主窗口选择一篇或多篇种子论文，通过 DOI、已保存的 OpenAlex ID或标题/作者/年份严格匹配 OpenAlex，分别查找参考文献、引用种子的后续工作和相关论文。同一候选会合并多个关系与多个种子依据；可按关系筛选并导入主窗口当前集合。参考文献按 OpenAlex 单次上限分批完整读取；后续引用按引用数排序，每篇种子最多取 50 篇，并在界面明确标注。导入条目保留 OpenAlex ID、推荐原因和种子论文，不自动导入种子本身。
 - **全文获取**：先在 Zotero 主窗口选中文献，再点击获取全文。统一按“明确的开放出版商 PDF → 严格匹配的 arXiv 最新版本 → OpenReview 稳定 PDF / ID 地址 → ACM/IEEE 出版商路径 → Zotero 原生全文查找”执行。WWW 缺少 DOI 时，仅在 Crossref 的标题、作者、年份和会议均严格匹配且结果唯一时写回 DOI，再进入 ACM 路径。结果会显示实际取得附件的来源。IEEE 北航订阅访问需在插件窗口手动完成 SSO；同一会话复用 Cookie，机构下载逐篇进行，开始时间至少间隔 10 秒。全文不保证可得；失败时保留书目条目，已知限制见 [TODO](../TODO.md)。
 
 arXiv 自动匹配要求标题规范化后一致、作者姓氏至少匹配一位（多作者论文至少两位）、首次提交年份与条目年份相差不超过一年，且只能有一个候选。下载使用不带 `vN` 的 PDF 地址以取得 arXiv 当前最新版本；该附件是作者版本，不等同于出版商最终版本。没有作者信息或存在歧义时跳过，不按标题单独猜测。
@@ -57,7 +58,7 @@ KDD 周期为 `KDD.org/2025/Research_Track_August`、`KDD.org/2025/Research_Trac
 在仓库根目录运行：
 
 ```sh
-node --test tests/test_zotero_plugin.cjs tests/test_zotero_arxiv.cjs tests/test_zotero_abstract.cjs tests/test_zotero_publication.cjs tests/test_zotero_openreview.cjs tests/test_zotero_ieee.cjs tests/test_zotero_database.cjs tests/test_zotero_systems.cjs tests/test_zotero_acm.cjs
+node --test tests/test_zotero_plugin.cjs tests/test_zotero_arxiv.cjs tests/test_zotero_abstract.cjs tests/test_zotero_discovery.cjs tests/test_zotero_publication.cjs tests/test_zotero_openreview.cjs tests/test_zotero_ieee.cjs tests/test_zotero_database.cjs tests/test_zotero_systems.cjs tests/test_zotero_acm.cjs
 python3 zotero-plugin/build.py
 ```
 

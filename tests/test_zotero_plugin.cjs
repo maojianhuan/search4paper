@@ -16,7 +16,8 @@ const fetchWith = request => core.fetchAccepted(2026, { request });
 
 test('selecting current results enables import for all supported conferences', () => {
   const controls = new Map(['fetch', 'refresh-papers', 'conference', 'cancel', 'filter', 'import', 'select-page', 'clear',
-    'enrich-abstracts', 'previous', 'next', 'source', 'tab-search', 'tab-fulltext', 'fulltext-cancel'].map(id => [id, {}]));
+    'enrich-abstracts', 'previous', 'next', 'source', 'tab-search', 'tab-discovery', 'tab-fulltext', 'fulltext-cancel',
+    'discovery-cancel','discovery-import','discovery-source'].map(id => [id, {}]));
   const context = { window: { arguments: [{ Zotero: {} }], addEventListener() {} },
     document: { querySelectorAll: () => [...controls.values()] } };
   vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/search.js'), 'utf8'), context);
@@ -499,6 +500,7 @@ function workflowUI(Zotero = {}, importer = {}, ieee = {status: '尚未验证', 
   };
   const scope = {URL, AbortController, Option: function(text,value){this.text=text;this.value=value;}, Search4PaperCore: core, Search4PaperImport: importer,
     Search4PaperArxiv: arxiv, Search4PaperPublication: publication, Search4PaperOpenReview: openreview, Search4PaperAbstract: abstract,
+    Search4PaperDiscovery: environment.Search4PaperDiscovery || {},
     window: {arguments: [{Zotero, ieeeSession: ieee, acmSession: {canHandle:()=>false,status:'',verificationURL:''}}], addEventListener() {}},
     document: {getElementById: element, querySelectorAll: () => [...elements.values()]},...environment};
   vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/search.js'), 'utf8'), scope);

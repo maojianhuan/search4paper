@@ -56,3 +56,4 @@ footer { justify-content: space-between; }
 [hidden] { display: none !important; }
 [role=tab][aria-selected=true] { border-color: #245fc0; background: color-mix(in srgb, Highlight 12%, Canvas); }
 #page-fulltext .operation-status { max-height: none; flex: 1; }
+#page-discovery .operation-status { max-height: 110px; }
