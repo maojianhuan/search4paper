@@ -6,7 +6,7 @@ var Search4PaperUI = {
   activePage: "search", operationPage: null,
   papers: [], candidates: [], selected: new Set(), active: null,
   discoveryPapers: [], discoverySeeds: [], discoverySelected: new Set(), discoveryActive: null,
-  openAlexRate: null,
+  discoverySummary: "", openAlexRate: null,
   page: 0, pageSize: 100, busy: false, controller: null, query: null, loadedTargets: [], coverageRows: [], filtersDirty: true,
   labels: { title: "标题", abstract: "摘要", keywords: "关键词", tldr: "TLDR" },
   $(id) { return document.getElementById(id); },
@@ -45,7 +45,7 @@ var Search4PaperUI = {
       this.$("tab-" + name).setAttribute("aria-selected", String(name === page));
       this.$("tab-" + name).tabIndex = name === page ? 0 : -1;
     }
-    this.$("page-title").textContent = page === "search" ? "论文检索" : page === "discovery" ? "相关文献" : "全文获取";
+    this.$("page-title").textContent = page === "search" ? "论文检索" : page === "discovery" ? "文献发现" : "全文获取";
   },
   status(text, error = false) {
     const page = this.operationPage || this.activePage;
@@ -360,8 +360,20 @@ var Search4PaperUI = {
     this.status(`摘要补全：成功 ${success}，失败 ${failures.length}，写回已有 Zotero 条目 ${written}。${failures.length ? "\n" + failures.map(result => `${result.paper.title}：${result.error}`).join("\n") : ""}`, Boolean(failures.length));
   },
   discoveryVisible() {
-    const relation = this.$("discovery-relation").value;
-    return relation ? this.discoveryPapers.filter(paper => paper.relations.includes(relation)) : this.discoveryPapers;
+    const readYear = id => {
+      const value = this.$(id).value.trim();
+      if (!value) return null;
+      const year = Number(value);
+      if (!/^\d{4}$/.test(value) || year < 1000 || year > 2100) throw new Error("文献发现年份必须是 1000–2100 之间的四位年份。");
+      return year;
+    };
+    const yearFrom = readYear("discovery-year-from"), yearTo = readYear("discovery-year-to");
+    if (yearFrom && yearTo && yearFrom > yearTo) throw new Error("文献发现的起始年份不能晚于结束年份。");
+    return Search4PaperDiscovery.filterAndSort(this.discoveryPapers, {
+      relation: this.$("discovery-relation").value, type: this.$("discovery-type").value,
+      library: this.$("discovery-library").value, oaOnly: this.$("discovery-oa").checked,
+      sort: this.$("discovery-sort").value, yearFrom, yearTo
+    });
   },
   updateOpenAlexQuota() {
     const target = this.$("openalex-quota");
@@ -387,15 +399,18 @@ var Search4PaperUI = {
       onProgress: message => this.status(message)
     });
     signal.throwIfAborted();
+    await Search4PaperDiscovery.markLibraryStatus(this.Zotero, result.papers);
+    signal.throwIfAborted();
     this.discoverySeeds = result.seeds; this.discoveryPapers = result.papers;
-    this.renderDiscovery(); this.previewDiscovery(result.papers[0] || null);
     const count = relation => result.papers.filter(paper => paper.relations.includes(relation)).length;
-    this.$("discovery-summary").textContent = `种子 ${result.seeds.length} 篇 · 相关结果 ${result.papers.length} 篇 · 参考文献 ${count("reference")} · 后续引用 ${count("citation")} · 相关论文 ${count("related")}。参考文献完整分批读取；后续引用按每篇种子的引用数排序，最多取 ${result.citationLimitPerSeed} 篇。`;
+    this.discoverySummary = `种子 ${result.seeds.length} 篇 · 相关结果 ${result.papers.length} 篇 · 参考文献 ${count("reference")} · 后续引用 ${count("citation")} · 相关论文 ${count("related")}。参考文献完整分批读取；后续引用按每篇种子的引用数排序，最多取 ${result.citationLimitPerSeed} 篇。`;
+    this.renderDiscovery(); this.previewDiscovery(this.discoveryVisible()[0] || null);
     this.status("相关文献扩展完成。可按关系筛选并选择导入。", false);
   },
   renderDiscovery() {
     const tbody = this.$("discovery-results"), papers = this.discoveryVisible(); tbody.replaceChildren();
     const labels = { reference: "参考文献", citation: "后续引用", related: "相关论文" };
+    const libraryLabels = { new: "尚未导入", existing: "已在库、无 PDF", pdf: "已在库、有 PDF" };
     for (const paper of papers) {
       const tr = document.createElementNS("http://www.w3.org/1999/xhtml", "tr"); tr.dataset.id = paper.id;
       tr.classList.toggle("active", this.discoveryActive?.id === paper.id);
@@ -408,11 +423,12 @@ var Search4PaperUI = {
       const title = document.createElementNS("http://www.w3.org/1999/xhtml", "button"); title.className = "paper-button"; title.textContent = paper.title;
       title.addEventListener("click", () => this.previewDiscovery(paper));
       const reason = document.createElementNS("http://www.w3.org/1999/xhtml", "span"); reason.className = "match-fields";
-      reason.textContent = `${paper.year || "年份未知"} · 引用 ${paper.citedByCount} · ${paper.relations.map(value => labels[value]).join(" / ")} · 关联 ${paper.seedTitles.length} 篇种子`;
+      reason.textContent = `${paper.year || "年份未知"} · ${paper.relations.map(value => labels[value]).join(" / ")} · ${libraryLabels[paper.libraryStatus]} · 排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
       text.append(title, reason); tr.append(choice, text); tbody.append(tr);
     }
     this.$("discovery-empty").hidden = papers.length > 0;
     this.$("discovery-empty").textContent = this.discoveryPapers.length ? "当前关系筛选下没有论文。" : "点击“扩展相关文献”开始。";
+    if (this.discoverySummary) this.$("discovery-summary").textContent = `${this.discoverySummary} 当前筛选显示 ${papers.length} 篇。`;
     this.controls();
   },
   previewDiscovery(paper) {
@@ -424,6 +440,11 @@ var Search4PaperUI = {
     const labels = { reference: "是种子论文的参考文献", citation: "引用了种子论文", related: "OpenAlex 判定为相关论文" };
     for (const relation of paper?.relations || []) {
       const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li"); li.textContent = `${labels[relation]}：${paper.seedTitles.join("；")}`; this.$("discovery-reasons").append(li);
+    }
+    if (paper) {
+      const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+      li.textContent = `当前排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
+      this.$("discovery-reasons").append(li);
     }
     for (const row of this.$("discovery-results").children) row.classList.toggle("active", row.dataset.id === paper?.id);
     this.controls();
@@ -437,6 +458,7 @@ var Search4PaperUI = {
       onProgress: (done, total, title) => this.status(`导入相关论文 ${done} / ${total}：${title}`) });
     const count = status => outcome.results.filter(result => result.status === status).length;
     const failure = outcome.results.find(result => result.error);
+    await Search4PaperDiscovery.markLibraryStatus(this.Zotero, this.discoveryPapers); this.renderDiscovery();
     this.status(`相关文献导入：新增 ${count("created")}，已有 ${count("existing")}，失败 ${count("failed")}，未处理 ${outcome.unprocessed}。${failure ? `\n${failure.paper.title}：${failure.error}` : ""}`, Boolean(failure));
   },
   async getFullText(signal) {
@@ -567,7 +589,7 @@ var Search4PaperUI = {
     this.$("acm-status").textContent = this.acm.status;
   },
   init() {
-    const pages = ["search", "discovery", "fulltext"];
+    const pages = ["search", "fulltext", "discovery"];
     for (const page of pages) {
       const tab = this.$("tab-" + page);
       tab.addEventListener("click", () => this.switchPage(page));
@@ -598,7 +620,13 @@ var Search4PaperUI = {
     this.$("openalex-save").addEventListener("click", () => this.saveOpenAlexKey());
     this.$("openalex-clear").addEventListener("click", () => { this.$("openalex-key").value = ""; this.saveOpenAlexKey(); });
     this.$("discovery-cancel").addEventListener("click", () => { if (this.operationPage === "discovery") this.controller?.abort(); });
-    this.$("discovery-relation").addEventListener("change", () => this.renderDiscovery());
+    for (const id of ["discovery-relation", "discovery-year-from", "discovery-year-to", "discovery-type",
+      "discovery-library", "discovery-oa", "discovery-sort"]) {
+      this.$(id).addEventListener("input", () => {
+        try { this.renderDiscovery(); if (this.discoveryActive) this.previewDiscovery(this.discoveryActive); }
+        catch (error) { this.status(error.message, true); }
+      });
+    }
     this.$("discovery-select").addEventListener("click", () => { for (const paper of this.discoveryVisible()) this.discoverySelected.add(paper.id); this.renderDiscovery(); });
     this.$("discovery-clear").addEventListener("click", () => { this.discoverySelected.clear(); this.renderDiscovery(); });
     this.$("discovery-import").addEventListener("click", () => this.operation(signal => this.importDiscovery(signal)));

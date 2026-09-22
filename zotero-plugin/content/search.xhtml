@@ -21,8 +21,8 @@
   <header><h1 id="page-title">论文检索</h1><span>search4paper</span></header>
   <nav class="toolbar" role="tablist" aria-label="工作流程">
     <button id="tab-search" role="tab" aria-controls="page-search" aria-selected="true">论文检索</button>
-    <button id="tab-discovery" role="tab" aria-controls="page-discovery" aria-selected="false" tabindex="-1">相关文献</button>
     <button id="tab-fulltext" role="tab" aria-controls="page-fulltext" aria-selected="false" tabindex="-1">全文获取</button>
+    <button id="tab-discovery" role="tab" aria-controls="page-discovery" aria-selected="false" tabindex="-1">文献发现</button>
   </nav>
   <section id="page-search" class="workflow-page" role="tabpanel" aria-labelledby="tab-search">
   <section class="venue-filters filter" aria-label="会议目录筛选">
@@ -87,8 +87,13 @@
       <span id="openalex-quota" class="hint">尚未读取额度。</span>
     </div>
     <p class="hint">免费 Key 可提高每日额度；Key 仅保存在本机 Zotero 配置中。修改后点击“保存 Key”。</p>
-    <div class="toolbar"><button id="discover" class="primary">扩展相关文献</button>
+    <div class="toolbar discovery-filters"><button id="discover" class="primary">扩展相关文献</button>
       <label>关系 <select id="discovery-relation"><option value="">全部</option><option value="reference">参考文献</option><option value="citation">后续引用</option><option value="related">相关论文</option></select></label>
+      <label>年份 <input id="discovery-year-from" inputmode="numeric" placeholder="起始" /></label><span>–</span><label><input id="discovery-year-to" inputmode="numeric" placeholder="结束" /></label>
+      <label>类型 <select id="discovery-type"><option value="">全部</option><option value="journal">期刊</option><option value="conference">会议</option><option value="preprint">预印本</option><option value="other">其他</option></select></label>
+      <label>库内状态 <select id="discovery-library"><option value="">全部</option><option value="new">尚未导入</option><option value="existing">已在库、无 PDF</option><option value="pdf">已在库、有 PDF</option></select></label>
+      <label><input id="discovery-oa" type="checkbox" />仅开放全文</label>
+      <label>排序 <select id="discovery-sort"><option value="recommended">综合推荐</option><option value="latest">最新发表</option><option value="cited">引用最多</option><option value="seeds">关联种子最多</option></select></label>
       <button id="discovery-select">选中当前结果</button><button id="discovery-clear">清空选择</button>
       <button id="discovery-import" disabled="disabled">导入到主窗口当前集合</button>
       <button id="discovery-cancel" disabled="disabled">取消</button></div>

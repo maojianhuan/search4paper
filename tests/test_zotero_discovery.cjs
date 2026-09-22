@@ -60,6 +60,29 @@ test('reference lookup batches beyond OpenAlex per-request limit without truncat
   assert.equal(papers.length,101);assert.equal(sizes.join(','),'100,1');
 });
 
+test('discovery filters and explainable sorts are deterministic',()=>{
+  const papers=[
+    {id:'W1',title:'Older connected',year:2020,workType:'article',sourceType:'journal',pdfURL:'pdf',citedByCount:30,relations:['reference','related'],seedTitles:['A','B'],libraryStatus:'new'},
+    {id:'W2',title:'New conference',year:2025,workType:'article',sourceType:'conference',pdfURL:'',citedByCount:2,relations:['citation'],seedTitles:['A'],libraryStatus:'existing'},
+    {id:'W3',title:'Popular preprint',year:2024,workType:'preprint',sourceType:'repository',pdfURL:'pdf',citedByCount:50,relations:['related'],seedTitles:['A'],libraryStatus:'pdf'}
+  ];
+  assert.equal(service.filterAndSort(papers,{type:'journal',oaOnly:true,library:'new'}).map(p=>p.id).join(','),'W1');
+  assert.equal(service.filterAndSort(papers,{yearFrom:2024,relation:'related',sort:'cited'}).map(p=>p.id).join(','),'W3');
+  assert.equal(service.filterAndSort(papers,{sort:'latest'}).map(p=>p.id).join(','),'W2,W3,W1');
+  assert.match(service.rankingExplanation(papers[0]),/关联 2 篇种子.*命中 2 类关系.*引用 30 次/);
+  assert.throws(()=>service.filterAndSort(papers,{sort:'unknown'}),/未知/);
+});
+
+test('library markers distinguish new, existing and local PDF papers',async()=>{
+  const item=(id,doi,attachments=[])=>({id,isRegularItem:()=>true,getField:key=>key==='DOI'?doi:'',getAttachments:()=>attachments});
+  const items=[item(1,'10.1000/existing'),item(2,'10.1000/pdf',[20])];
+  const attachment={attachmentContentType:'application/pdf',isFileAttachment:()=>true,fileExists:async()=>true};
+  const Zotero={Libraries:{userLibraryID:1},Items:{getAll:async()=>items,getAsync:async ids=>ids.map(()=>attachment)}};
+  const papers=[{id:'W1',doi:'10.1000/new'},{id:'W2',doi:'10.1000/existing'},{id:'W3',doi:'10.1000/pdf'}];
+  await service.markLibraryStatus(Zotero,papers);
+  assert.equal(papers.map(p=>p.libraryStatus).join(','),'new,existing,pdf');
+});
+
 test('OpenAlex identity participates in Zotero deduplication',()=>{
   assert.equal(core.identities({openalexID:'W123'}).has('openalex:W123'),true);
   assert.equal(core.identities({extra:'OpenAlex ID: W123'}).has('openalex:W123'),true);

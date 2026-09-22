@@ -59,3 +59,5 @@ footer { justify-content: space-between; }
 #page-discovery .operation-status { max-height: 110px; }
 .openalex-settings label { align-items: stretch; flex-direction: column; gap: 4px; }
 .openalex-settings input { min-width: 260px; }
+.discovery-filters input:not([type=checkbox]) { width: 72px; padding: 4px 6px; }
+.discovery-filters select { width: auto; padding-block: 4px; }

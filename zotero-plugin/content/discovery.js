@@ -61,10 +61,63 @@ var Search4PaperDiscovery = {
     const pdfURL = work.best_oa_location?.pdf_url || "";
     return { id, openalexID: id, title: work.title, year: Number(work.publication_year) || null,
       authors: this.workAuthors(work), abstract: this.abstract(work.abstract_inverted_index), doi,
-      url: landing, pdfURL, publicationTitle: source?.display_name || "", sourceType: source?.type || "",
+      url: landing, pdfURL, hasOpenAccess: Boolean(work.best_oa_location),
+      publicationTitle: source?.display_name || "", sourceType: source?.type || "",
       workType: work.type || "", citedByCount: Number(work.cited_by_count) || 0,
       referencedWorks: (work.referenced_works || []).map(value => this.id(value)).filter(Boolean),
       relatedWorks: (work.related_works || []).map(value => this.id(value)).filter(Boolean) };
+  },
+
+  paperType(paper) {
+    if (paper.workType === "preprint") return "preprint";
+    if (paper.sourceType === "conference") return "conference";
+    if (paper.sourceType === "journal") return "journal";
+    return "other";
+  },
+
+  rankingExplanation(paper, sort = "recommended") {
+    if (sort === "latest") return `发表年份 ${paper.year || "未知"}`;
+    if (sort === "cited") return `OpenAlex 引用 ${paper.citedByCount} 次`;
+    if (sort === "seeds") return `关联 ${paper.seedTitles.length} 篇种子论文`;
+    return `关联 ${paper.seedTitles.length} 篇种子 · 命中 ${paper.relations.length} 类关系 · 引用 ${paper.citedByCount} 次`;
+  },
+
+  filterAndSort(papers, options = {}) {
+    const { relation = "", type = "", oaOnly = false, library = "", yearFrom = null,
+      yearTo = null, sort = "recommended" } = options;
+    const result = papers.filter(paper => (!relation || paper.relations.includes(relation))
+      && (!type || this.paperType(paper) === type)
+      && (!oaOnly || Boolean(paper.hasOpenAccess ?? paper.pdfURL))
+      && (!library || paper.libraryStatus === library)
+      && (!yearFrom || paper.year >= yearFrom) && (!yearTo || paper.year <= yearTo));
+    const compare = {
+      latest: (a, b) => (b.year || 0) - (a.year || 0) || b.citedByCount - a.citedByCount,
+      cited: (a, b) => b.citedByCount - a.citedByCount || (b.year || 0) - (a.year || 0),
+      seeds: (a, b) => b.seedTitles.length - a.seedTitles.length || b.relations.length - a.relations.length,
+      recommended: (a, b) => b.seedTitles.length - a.seedTitles.length
+        || b.relations.length - a.relations.length || b.citedByCount - a.citedByCount || (b.year || 0) - (a.year || 0)
+    }[sort];
+    if (!compare) throw new Error("未知的文献发现排序方式。");
+    return result.sort((a, b) => compare(a, b) || a.title.localeCompare(b.title));
+  },
+
+  async markLibraryStatus(Zotero, papers) {
+    const existing = (await Zotero.Items.getAll(Zotero.Libraries.userLibraryID, true, false)).filter(item => item.isRegularItem());
+    const index = new Map();
+    for (const item of existing) for (const key of Search4PaperCore.identities({ doi: item.getField("DOI"), url: item.getField("url"), extra: item.getField("extra") })) {
+      if (!index.has(key)) index.set(key, new Map()); index.get(key).set(item.id, item);
+    }
+    for (const paper of papers) {
+      const matches = new Map();
+      for (const key of Search4PaperCore.identities(paper)) for (const [id, item] of index.get(key) || []) matches.set(id, item);
+      paper.libraryStatus = matches.size ? "existing" : "new";
+      for (const item of matches.values()) {
+        const attachments = await Zotero.Items.getAsync(item.getAttachments());
+        for (const attachment of attachments) if (attachment.attachmentContentType === "application/pdf"
+          && attachment.isFileAttachment() && await attachment.fileExists()) paper.libraryStatus = "pdf";
+      }
+    }
+    return papers;
   },
 
   async resolveItem(item, Zotero, request, signal) {
