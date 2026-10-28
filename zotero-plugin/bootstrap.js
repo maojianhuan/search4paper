@@ -39,7 +39,7 @@ function onMainWindowLoad({ window }) {
   }
   const menu = window.document.createXULElement("menuitem");
   menu.id = "search4paper-open";
-  menu.setAttribute("label", "search4paper：检索会议论文…");
+  menu.setAttribute("label", "search4paper：检索论文…");
   menu.addEventListener("command", () => {
     if (searchWindow && !searchWindow.closed) {
       searchWindow.focus();

@@ -6,7 +6,7 @@ var Search4PaperSystemsSources = (() => {
   const key = value => value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
   function configFor(conference, year) {
     const config = configs[conference]?.[year];
-    if (!config) throw new Error(`${conference} ${year} 官方论文来源尚未核实；当前支持 2025。`);
+    if (!config) throw new Error(Search4PaperCore.sourceYearError(conference, year));
     return config;
   }
   function paper(conference, year, fields, provenance) {
@@ -16,7 +16,7 @@ var Search4PaperSystemsSources = (() => {
       venueID: Search4PaperCore.venueID(conference, year), id: `${year}:${encodeURIComponent(key(fields.title))}`,
       number: null, abstract: "", keywords: "", tldr: "", doi: "", pdfURL: "", bibtex: "", detailURL: "",
       url: config.sourceURL, sourceURL: config.sourceURL, sourceMetadata: provenance,
-      track: "Research Papers", ...fields };
+      track: "Research Papers", ...(config.warning ? { retrievalWarning: config.warning } : {}), ...fields };
   }
   function merge(papers) {
     const seen = new Map();
@@ -62,7 +62,9 @@ var Search4PaperSystemsSources = (() => {
       if (!people) continue;
       const a = article.querySelector("h2 a[href]"), title = text(a);
       const url = a && new URL(a.getAttribute("href"), sourceURL).href;
-      if (!url?.startsWith(base + "presentation/")) throw new Error("USENIX 论文详情不属于所选会议年份。");
+      // Security 2026 includes a paper directly under /usenixsecurity26/yu-jerry.
+      if (!url?.startsWith(base + "presentation/")
+          && !(conference === "USENIX Security" && year === 2026 && url === base + "yu-jerry")) throw new Error("USENIX 论文详情不属于所选会议年份。");
       const names = (people.querySelector("p") || people).cloneNode(true);
       for (const em of names.querySelectorAll("em")) em.remove();
       papers.push(paper(conference, year, { title, authors: authors(text(names)), id: `${year}:${new URL(url).pathname}`,
@@ -124,6 +126,26 @@ var Search4PaperSystemsSources = (() => {
   }
   function parseCCS(data, year) {
     const config = configFor("CCS", year), papers = [];
+    if (year === 2026) {
+      const doc = html(data), provenance = { mode: "accepted-cycles", urls: [config.sourceURL], cycles: config.cycles };
+      if (!text(doc.querySelector("title")).includes("CCS 2026")) throw new Error("CCS 页面年份不符。");
+      for (const [index, label] of ["First Cycle", "Second Cycle"].entries()) {
+        const headings = [...doc.querySelectorAll("h3")].filter(h => text(h) === label);
+        const table = headings[0]?.nextElementSibling;
+        if (headings.length !== 1 || !table?.matches("table.accepted-papers-table")) throw new Error(`CCS 缺少 ${label} 研究论文列表。`);
+        const rows = [...table.querySelectorAll("tr")].filter(row => row.querySelector("td"));
+        if (!rows.length) throw new Error(`CCS ${label} 研究论文列表为空。`);
+        for (const row of rows) {
+          const cells = row.querySelectorAll("td");
+          if (cells.length !== 2) throw new Error("CCS 论文标题/作者列不完整。");
+          const names = cells[1].cloneNode(true);
+          for (const br of names.querySelectorAll("br")) br.replaceWith(";");
+          papers.push(paper("CCS", year, { title: text(cells[0]), authors: authors(text(names)),
+            cycles: [config.cycles[index]], ...exposedLinks(cells[0], config.sourceURL) }, provenance));
+        }
+      }
+      return merge(papers);
+    }
     if (typeof data === "string") data = JSON.parse(data);
     const provenance = { mode: "accepted-cycles", urls: [config.sourceURL, config.dataURL], cycles: config.cycles };
     for (const cycle of config.cycles) {
@@ -159,6 +181,33 @@ var Search4PaperSystemsSources = (() => {
   }
   function parseSIGCOMM(raw, year) {
     const config = configFor("SIGCOMM", year), doc = html(raw);
+    if (year === 2026) {
+      if (!text(doc.querySelector("title")).includes("SIGCOMM 2026")
+          || !text(doc.body).includes("detailed technical program below is final")) throw new Error("SIGCOMM 2026 最终日程无法核实。");
+      const papers = [], sessions = new Set();
+      for (const cell of doc.querySelectorAll("table.long_table_program td")) {
+        let session = "";
+        for (const row of cell.children) {
+          const heading = row.localName === "p" && row.querySelector(":scope > strong");
+          if (heading) session = text(heading);
+          // A cell can change from a research session to a sponsored/special session.
+          if (!/^(Research|Experience) Session \d+:/.test(session)) continue;
+          for (const title of row.querySelectorAll(".paper-title")) {
+            const url = title.getAttribute("data-pdf"), doi = url?.match(/^https:\/\/dl\.acm\.org\/doi\/(10\.1145\/[^?#\s]+)$/)?.[1];
+            if (!doi) throw new Error("SIGCOMM 主会论文缺少官方 DOI 链接。");
+            sessions.add(session.split(":")[0]);
+            const abstract = row.nextElementSibling?.matches(".paper-abstract") ? row.nextElementSibling : null;
+            papers.push(paper("SIGCOMM", year, { title: text(title), authors: authors(text(row.querySelector(".table-description"))),
+              doi, url, detailURL: url, track: session.startsWith("Research") ? "Research Papers" : "Experience Papers",
+              abstract: text(abstract).replace(/^Abstract:\s*/, "") }, { mode: "final-program", urls: [config.sourceURL] }));
+          }
+        }
+      }
+      for (const [kind, count] of [["Research", 18], ["Experience", 6]]) {
+        for (let i = 1; i <= count; i++) if (!sessions.has(`${kind} Session ${i}`)) throw new Error(`SIGCOMM 缺少 ${kind} Session ${i}，未返回部分名单。`);
+      }
+      return merge(papers);
+    }
     if (!text(doc.querySelector("h1")).includes(`SIGCOMM ${year}`)) throw new Error("SIGCOMM 页面年份不符。");
     const heading = [...doc.querySelectorAll("h2")].find(h => text(h) === "Full papers");
     const list = heading?.parentElement.nextElementSibling;

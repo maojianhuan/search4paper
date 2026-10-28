@@ -44,13 +44,14 @@ var Search4PaperImport = {
         for (const key of keys) for (const [id, item] of index.get(key) || []) matches.set(id, item);
         if (matches.size > 1) throw new Error("文献库中有多个相同 DOI/来源 ID 的条目，请先处理重复项。");
         const created = !matches.size;
-        const item = created ? new Zotero.Item("conferencePaper") : [...matches.values()][0];
+        const conference = Search4PaperCore.VENUES.find(name => Search4PaperCore.venueID(name, paper.year) === paper.venueID);
+        const journal = Search4PaperCore.JOURNAL_SOURCES[conference];
+        const conferenceName = Search4PaperCore.CONFERENCE_NAMES[conference];
+        if (!journal && !conferenceName) throw new Error(`不支持导入此会议或期刊：${paper.venueID}`);
+        const item = created ? new Zotero.Item(journal ? "journalArticle" : "conferencePaper") : [...matches.values()][0];
         await Zotero.DB.executeTransaction(async () => {
           if (collection && !collection.id) await collection.save();
           if (created) {
-            const conference = Search4PaperCore.CONFERENCES.find(name => Search4PaperCore.venueID(name, paper.year) === paper.venueID);
-            const conferenceName = Search4PaperCore.CONFERENCE_NAMES[conference];
-            if (!conferenceName) throw new Error(`不支持导入此会议：${paper.venueID}`);
             item.libraryID = libraryID;
             item.setField("title", paper.title);
             item.setField("abstractNote", paper.abstract);
@@ -58,7 +59,13 @@ var Search4PaperImport = {
             item.setField("url", paper.url);
             item.setField("DOI", paper.doi);
             if (conference === "ICDE" || (Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) item.setField("conferenceName", conferenceName);
-            item.setField("proceedingsTitle", `${conferenceName} (${conference} ${paper.year})`);
+            if (journal) {
+              item.setField("publicationTitle", journal.title);
+              item.setField("journalAbbreviation", conference);
+              item.setField("ISSN", paper.issn);
+              for (const field of ["date", "volume", "issue", "pages"]) if (paper[field]) item.setField(field, paper[field]);
+            }
+            else item.setField("proceedingsTitle", `${conferenceName} (${conference} ${paper.year})`);
             if ((Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) {
               if (paper.publicationTitle) item.setField("proceedingsTitle", paper.publicationTitle);
               if (paper.date) item.setField("date", paper.date);

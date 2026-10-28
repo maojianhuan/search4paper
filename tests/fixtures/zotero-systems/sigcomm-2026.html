@@ -1,0 +1,108 @@
+<!-- Official page excerpt saved 2026-09-29; lists reduced for offline parser tests. -->
+<title>Program Details | ACM SIGCOMM 2026</title><p>The detailed technical program below is final.</p><table class="long_table_program"><tr><td><p><strong>Research Session 1: LLM Inference &amp; Serving</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829139" data-video="https://www.youtube.com/watch?v=7qpuJ-W4D6w">KVServe:
+Service-Aware KV Cache Compression for Communication-Efficient Disaggregated LLM Serving</b><br/><span class="table-description">Zedong Liu, Xinyang Ma, Dejun Luo (University of Chinese Academy of
+Sciences), Hairui Zhao (Institute of Computing Technology, Chinese Academy of Sciences), Bing Lu
+(Institute of Computing Technology Chinese Academy of Sciences), Wenjing Huang (University of Chinese
+Academy of Sciences), Yida Gu, Xingchen Liu, Zheng Wei (Institute of Computing Technology, Chinese
+Academy of Sciences), Jinyang Liu (University of California, Riverside), Dingwen Tao, Guangming Tan
+(Institute of Computing Technology, Chinese Academy of Sciences)</span></p><div class="paper-abstract" hidden=""><span class="text-color-secondary">Abstract: </span>LLMs are widely adopted in production, pushing
+inference systems to their limits. Disaggregated LLM serving (e.g., PD separation and KV state
+disaggregation) improves scalability and cost efficiency, but it also turns KV into an explicit payload
+crossing network and storage boundaries, making KV a dominant end-to-end bottle-neck. Existing KV
+compression are typically statically configured at runtime, despite production service context varies over
+time in workload mix, bandwidth, and SLO/quality budgets. As a result, a fixed choice can be suboptimal or
+even increase latency. We present KVServe, the first service-aware and adaptive KV communication
+compression framework for disaggregated LLM serving: KVServe (1) unifies KV compression into a modular
+strategy space with new components and cross-method recomposition; (2) introduces Bayesian Profiling
+Engine that efficiently searches this space and distills a 3D Pareto candidate set, reducing 50x offline
+search overhead; and (3) deploys a Service-Aware Online Controller that combines an analytical latency
+model with a lightweight bandit to select profiles under constraints and correct offline-to-online
+mismatch. Integrated into vLLM and evaluated across datasets, models, GPUs and networks, KVServe achieves
+up to 9.13x JCT speedup in PD-separated serving and up to 32.8x TTFT reduction in KV-disaggregated
+serving.</div></td></tr><tr><td><p><strong>Research Session 2: Network Verification &amp; Formal Methods</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829122" data-video="https://www.youtube.com/watch?v=nfyADOZkK2c">Towards
+Efficient Verification of Distributed In-Network Computing Programs</b><br/><span class="table-description">Mingyuan Song, Huan Shen, Jinghui Jiang, Qiang Su, Ziheng Zhang, Qingyu Song
+(Xiamen University), Yuchao Zhang (Beijing University of Posts and Telecommunications), Wanjian Feng
+(Yealink), Fei Yuan (Xiamen University), Yitao Xing, Wenjia Wei (Huawei Technologies Co., Ltd.), Qiao
+Xiang, Jiwu Shu (Xiamen University)</span></p></td></tr><tr><td><p><strong>Research Session 3: Collective Communication Algorithms</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829181" data-video="https://www.youtube.com/watch?v=xYzPVxy9NRE">Trivance:
+Latency-Optimal AllReduce by Shortcutting Multiport Networks</b><br/><span class="table-description">Anton Juerss (Weizenbaum Institut Berlin), Vamsi Addanki (Purdue University),
+Stefan Schmid (Technische Universität Berlin)</span></p></td></tr><tr><td><p><strong>Research Session 4: Cellular &amp; RAN Systems</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829109" data-video="https://www.youtube.com/watch?v=q0YG3oRZ-Mg">CausalTune: Causal Learning based Automated Cellular RAN Configuration Tuning
+Framework</b><br/><span class="table-description">Leyang Xue, Bolun Zhang, Yibo Ma, Mahesh Marina
+(University of Edinburgh), He Yan, Yu Zhou, Cheuk Yiu Ip, Senthil Dhandapani, James Klosowski
+(AT&amp;T)</span></p></td></tr><tr><td><p><strong>Community Session</strong></p></td></tr><tr><td><p><strong>Research Session 5: In-Network Aggregation for ML</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829140" data-video="https://www.youtube.com/watch?v=lwEoSV67h2A">Turbo:
+Efficiently Serving Long-Context Large Language Models with In-Network Aggregation</b><br/><span class="table-description">Ying Wan (Southeast University), Yuchen Xu (Peking University), Chuwen Zhang
+(Tsinghua Unigroup), Yingsheng Huang (Southeast University), Yong Feng, Wenquan Xu (Tsinghua
+University), Jialin Li (National University of Singapore), Mingwei Xu (Tsinghua University), Wenfei Wu
+(Peking University), Congcong Miao (National University of Singapore)</span></p></td></tr><tr><td><p><strong>Research Session 6: Cloud Networking: DPUs, SmartNICs &amp; Gateways</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829121" data-video="https://www.youtube.com/watch?v=YV8JPbGkH7c">Dorado:
+Scaling SmartNIC Session Tables on Commodity DDRs</b><br/><span class="table-description">Heng Yu
+(Zhongguancun Laboratory), Kai Ren, Jiajun Liang, Baozeng Zhang (Tencent), Guozhi Lin (Zhongguancun
+Laboratory), Xinyi Zhang (CNIC CAS), Jian Wang, Jian Zhao (Tencent), Ziyue Zhai (Zhongguancun
+Laboratory), Liang Wang, Chao Pei (Tencent), Jilong Wang (Tsinghua University), Gaogang Xie (CNIC CAS),
+Ang Chen (University of Michigan), Congcong Miao (National University of Singapore)</span></p></td></tr><tr><td><p><strong>Experience Session 1: AI Datacenter Networks &amp; Communication</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829152" data-video="https://www.youtube.com/watch?v=acKwPC7VUIA">Connecting
+100K+ GPUs: Building the Communication Stack for Large-Scale LLM Training</b><br/><span class="table-description">Hongyi Zeng, Min Si, Pavan Balaji, Yongzhou Chen, Ching-Hsiang Chu, Adithya
+Gangidi, Prashanth Kannan, Bingzhe Liu, Saif Hasan, Dong He, Deep Shah, Ashmitha Jeevaraj Shetty,
+Gregory R Steinbrecher, Srikanth Sundaresan, Yulun Wang, Yexin Wu, Mingran Yang, Kenny Yu, Minlan Yu
+(Harvard University), Cen Zhao, Shengbao Zheng, Wesley Bland, Denis Boyda, Suman Gumudavelli, Subodh
+Iyengar, Daniel Johnson, Cristian Lumezanu, Kai Luo, Rui Miao, Zhe Qu, Venkatraghavan Ramesh, Jingliang
+Ren, Maxim Samoylov, Jan Seidel, Qiye Tan, Feng Tian, Xinfeng Xie, Jingyi Yang, Yimeng Zhao, Shuqiang
+Zhang, Tiane “Art” Zhu (Meta)</span></p><p><strong>Sponsored Session: Meta</strong></p><p><b class="paper-title" data-pdf="" data-video="https://www.youtube.com/watch?v=hnMubV_mQ9w">Networking for Meta's Gigawatt-scale AI
+fleet</b><br/><span class="table-description">James Hongyi Zeng (Meta)</span></p></td></tr><tr><td><p><strong>Research Session 7: Wireless, Backscatter &amp; Sensing</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829102" data-video="https://www.youtube.com/watch?v=W1p-4YE711g">FlowForm:
+Scalable Passive Metasurface Network for mmWave Coverage Expansion</b><br/><span class="table-description">Wuqiong Zhao, Baicheng Chen, Kai Zheng, Xingyu Chen, Wenqian Zhang, Xinyu
+Zhang (University of California San Diego)</span></p></td></tr><tr><td><p><strong><a class="link" href="../../non-paper/beyondgpus/" target="_blank">Non-paper Session: "Beyond
+GPUs: Networking and Systems Problems in Distributed LLM Serving"</a></strong></p></td></tr><tr><td><p><strong><a class="link" href="../../non-paper/retrocession/" target="_blank">Non-Paper Session: "SIGCOMM
+Retrosession: Real-time Media"</a></strong></p></td></tr><tr><td><p><strong>Research Session 8: Scale-Up Fabrics: Measurement &amp; Design</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829172" data-video="https://www.youtube.com/watch?v=hLP0JiFllZ8">FabricPerf: Measuring NIC-less Scale-Up Network through GPU Communication Kernel
+Profiling</b><br/><span class="table-description">Songlin Huang, Chenshu Wu (The University of Hong
+Kong)</span></p></td></tr><tr><td><p><strong>Experience Session 2: Content Delivery &amp; Video Streaming</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829158" data-video="https://www.youtube.com/watch?v=X1u388dttHE">Prefetching for Short Video Streaming: Experiences from a Longitudinal Evolution at
+Planetary Scale</b><br/><span class="table-description">Yinjie Zhang, Ying Chen, Yuming Hu, Aoyang Zhang,
+Pengcheng Chen, Zhixiang Luo, Shaopeng Li, Zhendong Zhong, Haiqing Tao, Lan Xie, Shenglan Huang, Zhiwei
+Fan, Feng Qian (ByteDance)</span></p></td></tr><tr><td><p><strong>Experience Session 3: Diagnosis &amp; Root-Cause Analysis</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829193" data-video="https://www.youtube.com/watch?v=llz3YKrErRs">Evolution
+of AliYANG: Model-driven and LLM-assisted Network Configuration Management</b><br/><span class="table-description">Mohan Yu (Jilin University and Alibaba Cloud), Xumiao Zhang, Zhe An (Alibaba
+Cloud), En Wang (Jilin University), Bin Zheng (Alibaba Cloud)</span></p></td></tr><tr><td><p><strong>Experience Session 4: Cloud Data Planes &amp; Network Virtualization</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829118" data-video="https://www.youtube.com/watch?v=UNswBEuqqYM">Rules
+Offload Engine (ROE): Accelerating Host SDN Policy Evaluation</b><br/><span class="table-description">Anshuman Verma, Tian Tan, Ahmed Abdelsalam, Milan Dasgupta, Jonathan Hunter,
+Zach Libby, Narayanan Ravichandran, Harish Srinivasan, Matt Reat, Nadeen Gebara, Vishal Gondaliya
+(Microsoft), Ezz Hamed (Meta), Rahul Garlapati, Lok Chand Koppaka, Abdullah Mughrabi, Dev Desai,
+Alexander Malysh, Shwetha Bhat, Rohan Kandi, Megan Sng (Microsoft), Tushar Garg (Meta), Muluken
+Hailesellasie, Andrew Putnam, Derek Chiou, Osman Ertugay (Microsoft), Alireza Dabagh (Microsoft Azure),
+Vivek Bhanu, Daniel Firestone (Microsoft)</span></p></td></tr><tr><td><p><strong>Posters/Demos</strong></p></td></tr><tr><td><p><strong>Research Session 9: Optical &amp; Photonic Fabrics</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829151" data-video="https://www.youtube.com/watch?v=1sUBDQ_Dqlk">λ<sub>λ</sub>: A Programming Language for Silicon Photonics</b><br/><span class="table-description">Vaibhav Mehta, Arjun Devraj (Cornell University), Bill Owens (Nysernet),
+Justin Hsu, Rachee Singh (Cornell University)</span></p><p><strong>Special Session 1: Best of Networking</strong></p><p><b class="paper-title" data-pdf="" data-video="https://www.youtube.com/watch?v=5C-2Mm7P_6A">APNet Rising Star</b><br/><span class="table-description">Junchen Jiang
+(University of Chicago)</span></p></td></tr><tr><td><p><strong>Research Session 10: Internet Measurement &amp; Routing</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829105" data-video="https://www.youtube.com/watch?v=GrlAGQRdB0A">OmniPath
+Ping: Active Network Measurement in the Era of Packet Spraying</b><br/><span class="table-description">Kaicheng Yang, Zongwei Lv, Peijun Huang, Kaitai Zhang, Qiuheng Yin, Yaoming
+Li, Feiyu Wang, Zhuochen Fan (Peking University), Yikai Zhao, Chen Sun (Huawei Technologies Co., Ltd.),
+Xia Zhu (Huawei Technologies Co., Ltd), Tong Yang (Peking University)</span></p></td></tr><tr><td><p><strong>Research Session 11: Scheduling for ML Training Clusters</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829150" data-video="https://www.youtube.com/watch?v=jgYs6ZCEWXw">MonkeyTree: Near-Minimal Congestion for Multi-tenant Training via Migration</b><br/><span class="table-description">Anton A. Zabreyko, Weiyang Wang, Manya Ghobadi (MIT)</span></p></td></tr><tr><td><p><strong>Research Session 12: Host Networking &amp; Packet Processing</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829115" data-video="https://www.youtube.com/watch?v=MbCvyYZCG58">Understanding Host Network Stack Latency</b><br/><span class="table-description">Tianyu Zuo
+(University of Virginia), Jaehyun Hwang (Sungkyunkwan University), Ao Tang, Rachit Agarwal (Cornell
+University), Qizhe Cai (University of Virginia)</span></p></td></tr><tr><td><p><strong><a class="link" href="../../non-paper/insideran/" target="_blank">Non-Paper Session: "Inside the
+AI-RAN and O-RAN Open-Source Stack: What the Stack Enables, Where It Blocks Us, and What Should Come
+Next"</a></strong></p></td></tr><tr><td><p><strong><a class="link" href="../../non-paper/meetr2/" target="_blank">Non-Paper Session: "Meet Reviewer
+#2"</a></strong></p></td></tr><tr><td><p><strong>Research Session 13: Datacenter Transport: RDMA &amp; Congestion Control</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829117" data-video="https://www.youtube.com/watch?v=WEs9ShGbFxE">STORM:
+Enabling Traffic Scheduling for RDMA</b><br/><span class="table-description">Jichun Wu (University of
+Cambridge), Ran Shu (Microsoft Research), Gianni Antichi (Politecnico di Milano &amp; Queen Mary
+University of London), Yongqiang Xiong (Microsoft Research), Jon Crowcroft, Andrew Moore (University of
+Cambridge)</span></p></td></tr><tr><td><p><strong>Research Session 14: Security, Privacy &amp; Networked Systems</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829107" data-video="https://www.youtube.com/watch?v=mtQo0W2qtoU">Towards
+High-Performance Intrusion Detection with Robustness Guarantees on Programmable Switches at ISP
+Scale</b><br/><span class="table-description">Han Zhang, Xuefeng Liu, Linqiang Qian (Tsinghua
+University), Guyue (Grace) Liu (Peking University), Tianyu Zhang, Kaiyang Zhao, Yantu Tong, Zeji Xiao
+(Tsinghua University), Dongbiao He (Sangfor Technologies Inc), Yahui Li (Tsinghua University), Ke Ruan
+(China Telecom), Jilong Wang (Tsinghua University), Yongqing Zhu (Institute of Network Technology &amp;
+China Telecom Corporation Limited Research Institute), Xia Yin (Tsinghua University)</span></p></td></tr><tr><td><p><strong>Student Research Competition</strong></p></td></tr><tr><td><p><strong>Research Session 15: Programmable Switches &amp; Data-Plane Hardware</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829111" data-video="https://www.youtube.com/watch?v=pH8W-p9DehM">Presto: A
+Match-Action TCP Stack for the Terabit Era</b><br/><span class="table-description">Rajath Shashidhara
+(University of Washington), Antoine Kaufmann (Max Planck Institute for Software Systems (MPI-SWS)),
+Simon Peter (University of Washington)</span></p></td></tr><tr><td><p><strong>Research Session 16: Satellite &amp; Non-Terrestrial Networks</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829144" data-video="https://www.youtube.com/watch?v=CndzNGNeOG8">CommSAR:
+Enabling Bidirectional Communication in SAR Imaging Satellites via Shared Waveform</b><br/><span class="table-description">Yimin Zhao (Shanghai Jiao Tong University), Zhenning Li (Aerospace Information
+Research Institute, Chinese Academy of Sciences), Hao Pan (Shanghai Jiao Tong University), Hua Li
+(Aerospace Information Research Institute, Chinese Academy of Sciences), Minhao Cui (Seoul National
+University), Jie Xiong (Nanyang Technological University), Yihai Wei, Yang Liu, Haonan Zhao, Mohan Zhang
+(Aerospace Information Research Institute, Chinese Academy of Sciences), Weibo Wang, Guihai Chen
+(Shanghai Jiao Tong University), Kaiyu Liu (Aerospace Information Research Institute, Chinese Academy of
+Sciences), Linghe Kong (Shanghai Jiao Tong University)</span></p></td></tr><tr><td><p><strong>Research Session 17: Congestion, Rate &amp; Schedule Control</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829156" data-video="https://www.youtube.com/watch?v=cXIa-EVkhzI">Improving
+Evaluation of Heterogenous Congestion Control Algorithm Interactions</b><br/><span class="table-description">Ranysha Ware (Swarthmore College), Haochen Zhang (Tsinghua University), Isabel
+Suizo, Srinivasan Seshan, Justine Sherry (Carnegie Mellon University)</span></p></td></tr><tr><td><p><strong>Research Session 18: Learning-Based &amp; Data-Driven Network Systems</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829106" data-video="https://www.youtube.com/watch?v=XOUmskEe328">Nüwa:
+A Generative Control Plane for AI Network Simulation</b><br/><span class="table-description">Wenkai Li
+(Xi'an Jiaotong University), Ran Shu (Microsoft Research Asia), Peng Zhang (Xi'an Jiaotong University),
+Yiren Zhao (University of Toronto), Danfeng Shan (Xi'an Jiaotong University), Yongqiang Xiong (Microsoft
+Research Asia)</span></p></td></tr><tr><td><p><strong>Experience Session 5: WAN, Configuration &amp; Verification</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829114" data-video="https://www.youtube.com/watch?v=1o6tIwyeW8I">GGN:
+Experiences in Designing and Deploying the Next-Generation Google Global Network</b><br/><span class="table-description">Mohammad Al-Fares, Anees Shaikh, Arjun Muralidharan, Bikash Koley, Charith
+Wickramaarachchi, Chi-Yao Hong, Jonathan Zolla, Min Zhu, Namrata Kadam, Priya Mahadevan, Subhasree
+Mandal, Rob Shakir, Aman Shaikh, Arda Balkanay, Arjun Singh, Dennis Fetterly, Nachikethas A. Jagadeesan,
+Richard Alimi, Sankalp Singh, Warren Martins (Google)</span></p></td></tr><tr><td><p><strong>Experience Session 6: Deployment Experiences: Security, Transport &amp; Core</strong></p><p><b class="paper-title" data-pdf="https://dl.acm.org/doi/10.1145/3789240.3829108" data-video="https://www.youtube.com/watch?v=GIkU3SzxwvU">Comprehensive Revocation Checking at Scale: the Deployment of CRLite in Mozilla
+Firefox</b><br/><span class="table-description">Nehal Fooda (University of Maryland), James Larisch
+(Cloudflare), John Schanck (Mozilla), Tijay Chung (Virginia Tech), Dave Levin (University of Maryland),
+Bruce Maggs (Duke University and Emerald Innovations), Christo Wilson (Northeastern University)</span></p></td></tr></table>

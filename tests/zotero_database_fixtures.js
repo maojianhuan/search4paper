@@ -45,5 +45,27 @@ function runSearch4PaperDatabaseFixtures(fixtures) {
     check(papers.every(p=>typeof p.abstract==='string'&&typeof p.keywords==='string'&&typeof p.tldr==='string'),'optional metadata '+conference);
     throws(()=>core.validateMetadata(meta,2026,conference),'cache year isolated '+conference);
   }
-  return {assertions,counts:{SIGMOD:mod.length,KDD:kdd.length,SIGIR:ir.length,VLDB:vldb.length}};
+  const mod26=db.parseSIGMOD(fixtures['sigmod-2026.html'],2026);
+  check(mod26.length===4&&mod26.some(p=>p.rounds.includes('round3')&&p.authors.length>1),'SIGMOD 2026 mixed heading levels and authors without br');
+  throws(()=>db.parseSIGMOD(fixtures['sigmod-2026.html'].replace('Round 4','Round 5'),2026),'SIGMOD 2026 missing round fails');
+  const kdd26=db.parseKDDOfficial(fixtures['kdd-2026.html'],2026);
+  check(kdd26.length===4&&kdd26.every(p=>p.track==='Research Track'&&p.doi.startsWith('10.1145/')),'KDD 2026 two JSON arrays contain research and non-research tracks');
+  check(new Set(kdd26.flatMap(p=>p.cycles)).size===2,'KDD 2026 retains both cycles');
+  throws(()=>db.parseKDDOfficial(fixtures['kdd-2026.html'].replace('const cycle2Papers','const unrelatedPapers'),2026),'KDD 2026 missing second cycle fails');
+  throws(()=>db.parseKDDOfficial(fixtures['kdd-2026.html'].replaceAll('"rtp"','"ads"'),2026),'KDD non-research tracks cannot stand in for Research Track');
+  const ir26=db.parseSIGIR(fixtures['sigir-2026.html'],2026);
+  check(ir26.length===2&&ir26[0].track==='Full Papers'&&ir26[1].track==='Short Papers','SIGIR 2026 decodes repeated embedded HTML and excludes other tracks');
+  check(ir26.every(p=>p.retrievalWarning.includes('初始录用名单')),'SIGIR snapshot limitation survives parsing');
+  throws(()=>db.parseSIGIR(fixtures['sigir-2026.html'].replaceAll('Short Papers','Missing Papers'),2026),'SIGIR 2026 incomplete list fails');
+  const vldb26=db.parseVLDB(fixtures['pvldb-19.html'],2026);
+  check(vldb26.length===11&&vldb26.every(p=>p.volume===19&&p.issue<=11&&p.pdfURL.includes('/vol19/')),'VLDB 2026 maps to volume 19 research issues and excludes issue 12');
+  throws(()=>db.parseVLDB(fixtures['pvldb-18.html'],2026),'VLDB rejects previous conference volume');
+  throws(()=>db.parseVLDB(fixtures['pvldb-19.html'].replace('/vol19/p','/vol18/p'),2026),'VLDB rejects PDF from another volume');
+  for(const [conference,papers,file,parse] of [['SIGMOD',mod26,'sigmod',db.parseSIGMOD],['KDD',kdd26,'kdd',db.parseKDDOfficial],['SIGIR',ir26,'sigir',db.parseSIGIR],['VLDB',vldb26,'pvldb',db.parseVLDB]]){
+    const meta={schemaVersion:1,year:2026,venueID:core.venueID(conference,2026),fetchedAt:new Date().toISOString(),paperCount:papers.length,papers};
+    check(core.validateMetadata(JSON.parse(JSON.stringify(meta)),2026,conference).paperCount===papers.length,'2026 cache round trip '+conference);
+    throws(()=>core.validateMetadata(meta,2025,conference),'2026 cache cannot enter 2025 '+conference);
+    throws(()=>parse(fixtures[file==='pvldb'?'pvldb-19.html':file+'-2026.html'],2025),'2026 official page cannot enter 2025 '+conference);
+  }
+  return {assertions,counts:{SIGMOD:mod26.length,KDD:kdd26.length,SIGIR:ir26.length,VLDB:vldb26.length}};
 }

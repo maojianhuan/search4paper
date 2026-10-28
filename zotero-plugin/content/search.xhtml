@@ -8,6 +8,7 @@
   <script src="core.js"></script>
   <script src="systems-sources.js" type="application/javascript"></script>
   <script src="database-sources.js"></script>
+  <script src="journal-sources.js"></script>
   <script src="sources.js"></script>
   <script src="import.js"></script>
   <script src="arxiv.js"></script>
@@ -15,6 +16,7 @@
   <script src="openreview.js"></script>
   <script src="abstract.js"></script>
   <script src="discovery.js"></script>
+  <script src="materials.js"></script>
   <script src="search.js" defer="defer"></script>
 </head>
 <body>
@@ -23,21 +25,31 @@
     <button id="tab-search" role="tab" aria-controls="page-search" aria-selected="true">论文检索</button>
     <button id="tab-fulltext" role="tab" aria-controls="page-fulltext" aria-selected="false" tabindex="-1">全文获取</button>
     <button id="tab-discovery" role="tab" aria-controls="page-discovery" aria-selected="false" tabindex="-1">文献发现</button>
+    <button id="tab-materials" role="tab" aria-controls="page-materials" aria-selected="false" tabindex="-1">代码仓库</button>
   </nav>
   <section id="page-search" class="workflow-page" role="tabpanel" aria-labelledby="tab-search">
-  <section class="venue-filters filter" aria-label="会议目录筛选">
+  <section class="venue-filters filter" aria-label="会议与期刊目录筛选">
     <label>专业领域 <select id="venue-field"><option value="">全部领域</option></select></label>
     <label>类型 <select id="venue-type"><option value="">全部类型</option><option value="会议">会议</option><option value="期刊">期刊</option></select></label>
     <label>CCF 分类 <select id="venue-rank"><option value="">全部等级</option><option value="A">A</option><option value="B">B</option><option value="C">C</option></select></label>
   </section>
   <p id="venue-summary" class="hint" role="status"></p>
   <section class="query" aria-label="论文检索条件">
-    <label>会议（可多选） <select id="conference" multiple="multiple" size="6"></select></label>
-    <label>年份（分号或范围） <input id="year" value="2026" placeholder="例如：2024; 2025 或 2024-2026" /></label>
+    <label>会议 / 期刊（可多选） <select id="conference" multiple="multiple" size="6"></select></label>
+    <label>年份（分号或范围） <input id="year" value="2026" placeholder="例如：2025; 2026 或 2025-2026" aria-describedby="year-support" /></label>
     <label class="grow">关键词 <input id="terms" value="anomaly detection; time series" placeholder="例如：anomaly detection; time series" aria-describedby="phrase-rule" /></label>
     <label>关键词关系 <select id="operator"><option value="AND">全部满足（AND）</option><option value="OR">任意满足（OR）</option></select></label>
-    <button id="fetch" class="primary" title="优先读取所选会议、年份的本地名单；没有本地数据时联网获取并保存">搜索论文</button>
+    <button id="fetch" class="primary" title="优先读取所选会议或期刊、年份的本地名单；没有本地数据时联网获取并保存">搜索论文</button>
   </section>
+  <p id="year-support" class="hint" role="status" aria-live="polite"></p>
+  <details id="source-support">
+    <summary id="support-summary">查看支持范围</summary>
+    <div class="support-scroll"><table aria-label="会议与期刊支持年份与论文范围">
+      <thead><tr><th scope="col">会议 / 期刊</th><th scope="col">已适配年份 / 查询规则</th><th scope="col">论文范围</th></tr></thead>
+      <tbody id="support-rows"></tbody>
+    </table></div>
+    <p class="hint">年份范围表示适配规则，不保证每年数据已公开或已全部收录。会议检索录用名单，期刊检索已出版书目；具体年份口径见表中说明。任一范围失败时不会发布部分结果。未接入的会议、期刊不在此表中。</p>
+  </details>
   <p id="phrase-rule" class="hint">分号分隔关键词；空格保留词组。AND 全部满足，OR 任一满足。</p>
   <section class="filter" aria-label="查找位置与筛选操作" aria-describedby="field-rule">
     <span>查找位置（可多选）</span>
@@ -46,14 +58,14 @@
     <label><input id="field-keywords" type="checkbox" checked="checked" />关键词</label>
     <label><input id="field-tldr" type="checkbox" checked="checked" />TLDR</label>
     <button id="filter" disabled="disabled">应用筛选</button>
-    <button id="refresh-papers" title="重新从官方论文来源获取所选会议、年份的完整名单，成功后替换本地数据">刷新名单</button>
+    <button id="refresh-papers" title="重新从支持的来源获取所选会议或期刊、年份的名单，成功后替换本地数据">刷新名单</button>
     <button id="cancel" disabled="disabled">取消操作</button>
   </section>
   <div class="query-summary" aria-label="当前匹配规则">
     <p><strong>当前条件：</strong><span id="query-expression"></span></p>
     <p id="field-rule"></p>
   </div>
-  <p id="coverage" class="coverage">优先读取本地录用名单；首次检索联网获取并保存。需要更新时点击“刷新名单”。</p>
+  <p id="coverage" class="coverage">优先读取本地名单；会议查询录用论文，期刊查询已出版书目。首次检索联网获取并保存，需要更新时点击“刷新名单”。</p>
   <div class="workspace">
     <section class="candidates" aria-label="候选论文">
       <div class="toolbar"><strong id="count">候选论文 0 篇</strong><span id="selection">已选 0 篇</span>
@@ -65,6 +77,7 @@
     </section>
     <section class="preview" aria-label="论文预览">
       <h2 id="paper-title">论文预览</h2><p id="authors" class="hint"></p>
+      <p id="publication-info" class="hint" hidden="hidden"></p>
       <p><button id="source" disabled="disabled">打开论文来源</button></p>
       <h3>摘要</h3><p id="abstract">选择一篇候选论文。</p>
       <h3>命中依据</h3><ul id="evidence"></ul>
@@ -106,6 +119,23 @@
         <h3>推荐依据</h3><ul id="discovery-reasons"></ul></section>
     </div>
     <p id="discovery-status" class="operation-status" role="status" aria-live="polite">就绪</p>
+  </section>
+  <section id="page-materials" class="workflow-page" role="tabpanel" aria-labelledby="tab-materials" hidden="hidden">
+    <p>在 Zotero 主窗口选择一篇论文，查找其代码链接，检查 GitHub 仓库是否公开、是否有非空代码文件。</p>
+    <div class="toolbar">
+      <button id="materials-find" class="primary">查找并检查代码</button>
+      <button id="materials-save" disabled="disabled">确认关联选中链接（0）</button>
+      <button id="materials-cancel" disabled="disabled">取消</button>
+    </div>
+    <p id="materials-target">尚未选择论文。</p>
+    <p class="hint">从条目摘要、OpenReview 或可核对身份的论文网页提取链接。自动检查 GitHub 默认分支，列出非空代码文件和原文摘录；文件存在不等于完整实现。不扫描 PDF、不搜索同名仓库；其他站点需手动核对。</p>
+    <p id="materials-coverage" class="coverage">尚未检查代码链接。</p>
+    <div class="materials-scroll"><table aria-label="代码链接、仓库内容与论文出处">
+      <thead><tr><th scope="col">选择</th><th scope="col">代码链接</th><th scope="col">GitHub 仓库内容</th><th scope="col">论文出处</th></tr></thead>
+      <tbody id="materials-results"></tbody>
+    </table><p id="materials-empty" class="hint">检查结果会在这里显示。未找到链接、无法访问或触发限流，都不代表论文没有公开代码。</p></div>
+    <p class="hint">核对后勾选并确认，将链接、仓库检查结果和论文出处保存为子笔记。默认不勾选；再次检查会获取当前状态，已有笔记保持不变。</p>
+    <p id="materials-status" class="operation-status" role="status" aria-live="polite">就绪</p>
   </section>
   <section id="page-fulltext" class="workflow-page" role="tabpanel" aria-labelledby="tab-fulltext" hidden="hidden">
     <p>在 Zotero 主窗口选中文献，再点击“获取全文”。</p>

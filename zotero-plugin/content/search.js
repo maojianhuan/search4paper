@@ -6,7 +6,8 @@ var Search4PaperUI = {
   activePage: "search", operationPage: null,
   papers: [], candidates: [], selected: new Set(), active: null,
   discoveryPapers: [], discoverySeeds: [], discoverySelected: new Set(), discoveryActive: null,
-  discoverySummary: "", openAlexRate: null,
+  materialTarget: null, materialCandidates: [], materialSelected: new Set(), materialSaved: new Set(),
+  discoverySummary: "", openAlexRate: null, supportError: "",
   page: 0, pageSize: 100, busy: false, controller: null, query: null, loadedTargets: [], coverageRows: [], filtersDirty: true,
   labels: { title: "标题", abstract: "摘要", keywords: "关键词", tldr: "TLDR" },
   $(id) { return document.getElementById(id); },
@@ -33,37 +34,66 @@ var Search4PaperUI = {
   },
   selectedTargets() {
     const conferences = this.selectedConferences();
-    if (!conferences.length) throw new Error("请至少选择一个会议。");
-    return conferences.flatMap(conference => this.selectedYears().map(year => ({ conference, year })));
+    if (!conferences.length) throw new Error("请至少选择一个会议或期刊。");
+    const years = this.selectedYears();
+    const targets = conferences.flatMap(conference => years.map(year => ({ conference, year })));
+    const unsupported = targets.map(({ conference, year }) => Search4PaperCore.sourceYearError(conference, year)).filter(Boolean);
+    if (unsupported.length) throw new Error(unsupported.join("\n"));
+    return targets;
+  },
+  updateSourceSupport() {
+    const names = [...this.$("conference").options].map(option => option.value);
+    const selected = new Set(this.selectedConferences()), escape = Search4PaperCore.escapeHTML;
+    names.sort((a, b) => Number(selected.has(b)) - Number(selected.has(a)));
+    this.$("support-rows").innerHTML = names.map(name => {
+      const support = Search4PaperCore.sourceSupport(name);
+      return `<tr${selected.has(name) ? ' class="selected-source"' : ""}><td>${escape(name)}</td>`
+        + `<td>${support.conditional ? "规则：" : "已核实："}${escape(support.label)}</td><td>${escape(support.scope)}</td></tr>`;
+    }).join("");
+    this.$("support-summary").textContent = `查看支持范围（当前目录 ${names.length} 个会议 / 期刊）`;
+    const labels = [...selected].map(name => `${name}：${Search4PaperCore.sourceSupport(name).label}`);
+    this.supportError = "";
+    let warnings = [];
+    try {
+      const targets = this.selectedTargets();
+      warnings = targets.map(({ conference, year }) => {
+        const config = Search4PaperCore.JOURNAL_SOURCES[conference] || Search4PaperCore.DATABASE_SOURCES[conference]?.[year] || Search4PaperCore.SYSTEMS_SOURCES[conference]?.[year];
+        return config?.warning ? `${conference} ${year}：${config.warning}` : "";
+      }).filter(Boolean);
+    }
+    catch (error) { this.supportError = error.message; }
+    this.$("year-support").textContent = [this.supportError || `可查询年份：${labels.join("；")}。`, ...warnings].join("\n");
+    this.$("year-support").classList.toggle("error", Boolean(this.supportError));
   },
   targetKey(target) { return `${target.conference}:${target.year}`; },
   paperKey(paper) { return `${paper.venueID}:${paper.id}`; },
   switchPage(page) {
     this.activePage = page;
-    for (const name of ["search", "discovery", "fulltext"]) {
+    for (const name of ["search", "discovery", "fulltext", "materials"]) {
       this.$("page-" + name).hidden = name !== page;
       this.$("tab-" + name).setAttribute("aria-selected", String(name === page));
       this.$("tab-" + name).tabIndex = name === page ? 0 : -1;
     }
-    this.$("page-title").textContent = page === "search" ? "论文检索" : page === "discovery" ? "文献发现" : "全文获取";
+    this.$("page-title").textContent = { search: "论文检索", discovery: "文献发现", fulltext: "全文获取", materials: "代码仓库" }[page];
   },
   status(text, error = false) {
     const page = this.operationPage || this.activePage;
-    const id = page === "fulltext" ? "fulltext-status" : page === "discovery" ? "discovery-status" : "status";
+    const id = page === "search" ? "status" : `${page}-status`;
     this.$(id).textContent = text;
     this.$(id).classList.toggle("error", error);
   },
   controls() {
     for (const element of document.querySelectorAll("input, select, button")) element.disabled = this.busy;
-    this.$("tab-search").disabled = this.$("tab-discovery").disabled = this.$("tab-fulltext").disabled = false;
+    this.$("tab-search").disabled = this.$("tab-discovery").disabled = this.$("tab-fulltext").disabled = this.$("tab-materials").disabled = false;
     this.$("cancel").disabled = !this.busy || this.operationPage !== "search";
     this.$("fulltext-cancel").disabled = !this.busy || this.operationPage !== "fulltext";
     this.$("discovery-cancel").disabled = !this.busy || this.operationPage !== "discovery";
+    this.$("materials-cancel").disabled = !this.busy || this.operationPage !== "materials";
     if (this.busy) return;
     const noConference = !this.selectedConferences().length;
     this.$("conference").disabled = noConference;
-    this.$("fetch").disabled = this.$("refresh-papers").disabled = noConference;
-    this.$("filter").disabled = noConference || !this.papers.length;
+    this.$("fetch").disabled = this.$("refresh-papers").disabled = noConference || Boolean(this.supportError);
+    this.$("filter").disabled = noConference || Boolean(this.supportError) || !this.papers.length;
     this.$("import").disabled = !this.selected.size || this.filtersDirty;
     this.$("import").title = this.filtersDirty ? "检索条件已修改，请先搜索论文或应用筛选。"
       : !this.selected.size ? "请勾选论文左侧的复选框，或点击“选中本页”。" : "导入到所选文献库位置。";
@@ -75,6 +105,7 @@ var Search4PaperUI = {
     this.$("source").disabled = !this.active;
     this.$("discovery-import").disabled = !this.discoverySelected.size;
     this.$("discovery-source").disabled = !this.discoveryActive;
+    this.$("materials-save").disabled = !this.materialTarget || !this.materialSelected.size;
   },
   updateConferenceOptions() {
     const select = this.$("conference"), previous = new Set(this.selectedConferences());
@@ -84,18 +115,20 @@ var Search4PaperUI = {
     for (const name of names) {
       const option = new Option(name, name); option.selected = previous.has(name); select.add(option);
     }
+    select.size = Math.min(6, Math.max(2, names.length));
     if (!names.some(name => previous.has(name)) && names.length) {
       select.value = names[0]; select.options[0].selected = true;
     }
     if (!names.length) select.value = "";
     this.$("venue-summary").textContent = names.length
-      ? `CCF 2026 · 当前可选 ${names.length} / ${Search4PaperCore.CONFERENCES.length} 个会议。三个目录条件同时满足；仅显示已支持来源。`
-      : "当前组合暂无已支持来源。期刊和其他会议尚未接入，请调整目录筛选。";
+      ? `CCF 2026 · 当前可选 ${names.length} / ${Search4PaperCore.VENUES.length} 个来源（共 ${Search4PaperCore.CONFERENCES.length} 个会议、${Object.keys(Search4PaperCore.JOURNAL_SOURCES).length} 本期刊）。三个目录条件同时满足。`
+      : "当前组合暂无已支持来源，请调整目录筛选。";
     const changed = [...previous].sort().join("\n") !== this.selectedConferences().sort().join("\n");
     if (changed && this.loadedTargets.length) {
       this.filtersDirty = true;
-      this.status("会议选择已改变；已有结果保留，更换会议后请重新搜索。");
+      this.status("会议 / 期刊选择已改变；已有结果保留，更换来源后请重新搜索。");
     }
+    this.updateSourceSupport();
     this.controls();
   },
   async operation(action) {
@@ -137,6 +170,7 @@ var Search4PaperUI = {
   async request(url, signal, responseType = "json") {
     signal.throwIfAborted();
     const openAlex = URL.canParse(url) && new URL(url).hostname === "api.openalex.org";
+    const github = URL.canParse(url) && new URL(url).hostname === "api.github.com";
     const openAlexRequest = openAlex ? Search4PaperDiscovery.apiRequest(url,
       this.Zotero.Prefs.get("extensions.search4paper.openAlexAPIKey", true) || "") : null;
     const requestURL = openAlexRequest?.url || url;
@@ -146,23 +180,29 @@ var Search4PaperUI = {
     try {
       const response = await this.Zotero.HTTP.request("GET", requestURL, {
         // Official proceedings XML/program files can exceed 10 MB on a slow connection.
-        responseType, timeout: url.startsWith("https://api2.openreview.net/") ? 60000 : 300000,
+        responseType: responseType === "html" ? "text" : responseType,
+        timeout: url.startsWith("https://api2.openreview.net/") ? 60000 : 300000,
         errorDelayMax: 0, noRetryOnThrottle: true,
         // A live ICML page at offset 5000 returned a cached empty response;
         // Cache-Control: no-cache returned the complete page and correct total.
-        noCache: true, headers: { "Cache-Control": "no-cache", ...openAlexRequest?.headers },
+        noCache: true, headers: { "Cache-Control": "no-cache", ...openAlexRequest?.headers,
+          ...(github ? { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } : {}) },
         cancellerReceiver(fn) { cancel = fn; if (signal.aborted) fn(); }
       });
       if (openAlex) {
         this.openAlexRate = Search4PaperDiscovery.rateLimit(response);
         this.updateOpenAlexQuota();
       }
-      return response.response;
+      // Relative material links must resolve against the final page after redirects.
+      return responseType === "html" ? { body: response.response, url: response.responseURL } : response.response;
     }
     catch (error) {
       signal.throwIfAborted();
+      if (github) throw Object.assign(new Error(`GitHub 请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${error.message}`),
+        { status: error.status, apiMessage: error.xmlhttp?.response?.message });
       if (openAlex && error.status === 429) throw new Error("OpenAlex API 今日额度已用尽或请求过快（HTTP 429）。请配置免费 API Key，或等待额度在 UTC 00:00 重置。");
-      throw new Error(`论文来源请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${url}\n${error.status === 404 ? "该会议年份的官方数据尚不可用。" : error.message}`);
+      const missing = responseType === "html" ? "该论文来源地址不存在或已移除。" : "该来源年份的数据尚不可用。";
+      throw new Error(`论文来源请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${url}\n${error.status === 404 ? missing : error.message}`);
     }
     finally { signal.removeEventListener("abort", abort); }
   },
@@ -172,7 +212,7 @@ var Search4PaperUI = {
     this.papers = []; this.loadedTargets = []; this.coverageRows = []; this.query = null;
     this.candidates = []; this.selected.clear(); this.active = null; this.page = 0;
     this.render(); this.preview(null);
-    this.$("coverage").textContent = `正在读取 ${targets.length} 个会议/年份范围的公开录用名单…`;
+    this.$("coverage").textContent = `正在读取 ${targets.length} 个来源/年份范围的论文名单…`;
     this.status("正在读取本地元数据…");
     const loaded = [];
     try {
@@ -211,14 +251,14 @@ var Search4PaperUI = {
       missingAbstracts: entry.metadata.papers.filter(paper => !paper.abstract.trim()).length,
       local: entry.local, fetchedAt: entry.metadata.fetchedAt,
       warning: entry.metadata.papers[0]?.retrievalWarning || "" }));
-    this.$("coverage").textContent = `已加载 ${loaded.length} 个会议/年份范围、${this.papers.length} 篇论文；缺少摘要 ${this.coverageRows.reduce((sum, row) => sum + row.missingAbstracts, 0)} 篇。\n`
+    this.$("coverage").textContent = `已加载 ${loaded.length} 个来源/年份范围、${this.papers.length} 篇论文；缺少摘要 ${this.coverageRows.reduce((sum, row) => sum + row.missingAbstracts, 0)} 篇。\n`
       + this.coverageRows.map(row => `${row.conference} ${row.year} · ${row.source} · ${row.paperCount} 篇 · 缺摘要 ${row.missingAbstracts} · ${row.local ? "本地名单" : "已保存到本地"}${row.warning ? ` · ${row.warning}` : ""}`).join("\n");
     await this.filterPapers(signal, query);
   },
   async filterPapers(signal, query = this.readQuery()) {
     const selected = this.selectedTargets().map(target => this.targetKey(target)).sort();
     const loaded = this.loadedTargets.map(target => this.targetKey(target)).sort();
-    if (selected.join("\n") !== loaded.join("\n")) throw new Error("会议或年份已更改，请点击“搜索论文”获取对应名单。");
+    if (selected.join("\n") !== loaded.join("\n")) throw new Error("会议、期刊或年份已更改，请点击“搜索论文”获取对应名单。");
     const candidates = [];
     for (let i = 0; i < this.papers.length; i++) {
       if (i % 100 === 0) {
@@ -266,6 +306,11 @@ var Search4PaperUI = {
     this.active = paper;
     this.$("paper-title").textContent = paper?.title || "论文预览";
     this.$("authors").textContent = paper ? paper.authors.join("; ") : "";
+    this.$("publication-info").hidden = paper?.itemType !== "journalArticle";
+    this.$("publication-info").textContent = paper?.itemType === "journalArticle" ? [paper.publicationTitle,
+      paper.volume && `卷 ${paper.volume}`, paper.issue && `期 ${paper.issue}`, paper.pages && `页 ${paper.pages}`,
+      `出版日期 ${paper.date}`, `年份依据：${paper.yearBasis}`,
+      paper.onlineDate && `在线出版 ${paper.onlineDate}`, paper.printDate && `卷期出版 ${paper.printDate}`].filter(Boolean).join(" · ") : "";
     this.$("abstract").textContent = paper ? paper.abstract || "来源未提供摘要。" : "选择一篇候选论文。";
     this.$("evidence").replaceChildren();
     for (const hit of paper?.evidence || []) {
@@ -324,7 +369,7 @@ var Search4PaperUI = {
         });
         if (!resolved) throw new Error("未找到标题、作者和年份均严格匹配的摘要。");
         const sourcePaper = this.papers.find(candidate => this.paperKey(candidate) === this.paperKey(paper));
-        if (!sourcePaper) throw new Error("当前候选已不属于已加载的会议/年份范围。");
+        if (!sourcePaper) throw new Error("当前候选已不属于已加载的来源/年份范围。");
         for (const target of [sourcePaper, paper]) {
           target.abstract = resolved.abstract;
           target.abstractSource = resolved.source;
@@ -588,8 +633,102 @@ var Search4PaperUI = {
     this.$("acm-access").hidden = !this.acm.verificationURL;
     this.$("acm-status").textContent = this.acm.status;
   },
+  async findMaterials(signal) {
+    this.materialTarget = null; this.materialCandidates = []; this.materialSelected.clear(); this.materialSaved.clear();
+    this.$("materials-target").textContent = "尚未选择论文。";
+    this.$("materials-coverage").textContent = "尚未检查代码链接。";
+    this.renderMaterials();
+    const items = this.Zotero.getActiveZoteroPane()?.getSelectedItems() || [];
+    if (items.length !== 1) throw new Error("请在 Zotero 主窗口只选择一篇论文，再检查代码仓库。");
+    const target = Search4PaperMaterials.snapshot(items[0]);
+    this.materialTarget = target;
+    this.$("materials-target").textContent = `本次论文（确认后保存到此条目）：${target.title}`;
+    this.status("正在查找论文代码链接并检查 GitHub 仓库内容…");
+    this.$("materials-coverage").textContent = "正在检查条目摘要、论文来源和仓库文件；尚未产生检查结果。";
+    let result;
+    try {
+      result = await Search4PaperMaterials.discover(target, { signal,
+        request: (url, requestSignal, type) => this.request(url, requestSignal, type) });
+      signal.throwIfAborted();
+    }
+    catch (error) {
+      this.$("materials-coverage").textContent = "论文来源检查未完成；这不表示论文没有公开代码。";
+      throw error;
+    }
+    this.materialCandidates = result.candidates;
+    this.$("materials-coverage").textContent = `本次已检查：${result.checked.join("；")}。`;
+    this.renderMaterials();
+    const withCode = result.candidates.filter(candidate => candidate.repository?.codeCount > 0).length;
+    this.status(result.candidates.length ? `找到 ${result.candidates.length} 个代码相关链接；${withCode} 个 GitHub 仓库发现非空代码文件。请核对文件内容与论文出处后确认关联。`
+      : "本次检查范围内未找到代码链接；这不代表论文未公开代码。");
+  },
+  renderMaterials() {
+    const body = this.$("materials-results"); body.replaceChildren();
+    const element = (tag, text) => {
+      const node = document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    for (const candidate of this.materialCandidates) {
+      const row = element("tr"), choice = element("td"), material = element("td"), contents = element("td"), evidence = element("td");
+      if (this.materialSaved.has(candidate.url)) choice.append(element("span", "已关联"));
+      else {
+        const checkbox = element("input"); checkbox.type = "checkbox"; checkbox.checked = this.materialSelected.has(candidate.url);
+        checkbox.setAttribute("aria-label", `确认关联代码链接 ${candidate.url}`);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) this.materialSelected.add(candidate.url); else this.materialSelected.delete(candidate.url);
+          this.$("materials-save").textContent = `确认关联选中链接（${this.materialSelected.size}）`;
+          this.controls();
+        });
+        choice.append(checkbox);
+      }
+      material.append(element("strong", candidate.label), element("p", candidate.url));
+      const open = element("button", "打开代码链接");
+      open.addEventListener("click", () => this.Zotero.launchURL(candidate.url)); material.append(open);
+      const check = candidate.repository;
+      if (check) {
+        const facts = Search4PaperMaterials.repositoryFacts(check);
+        const label = element("strong", facts[0]); label.className = `repository-state repository-${check.state}`; contents.append(label);
+        for (const fact of facts.slice(1)) contents.append(element("p", fact));
+        for (const file of check.files || []) {
+          const line = element("p"), button = element("button", file.path);
+          button.addEventListener("click", () => this.Zotero.launchURL(file.url));
+          line.append(button, element("span", ` · ${file.size} 字节`)); contents.append(line);
+        }
+        if (check.samples?.length) {
+          const samples = element("details"); samples.append(element("summary", "查看 README / 代码原文摘录"));
+          for (const sample of check.samples) samples.append(element("p", sample.path),
+            element("blockquote", sample.error ? `正文读取失败：${sample.error}` : sample.text));
+          contents.append(samples);
+        }
+      }
+      const sources = element("details"); sources.append(element("summary", `出处与原文（${candidate.evidence.length}）`));
+      for (const source of candidate.evidence) {
+        sources.append(element("p", `${source.source} · ${source.location}`), element("blockquote", source.quote));
+        if (source.sourceURL) {
+          sources.append(element("p", source.sourceURL));
+          const origin = element("button", "打开出处");
+          origin.addEventListener("click", () => this.Zotero.launchURL(source.sourceURL)); sources.append(origin);
+        }
+      }
+      evidence.append(sources); row.append(choice, material, contents, evidence); body.append(row);
+    }
+    this.$("materials-empty").hidden = Boolean(this.materialCandidates.length);
+    this.$("materials-save").textContent = `确认关联选中链接（${this.materialSelected.size}）`;
+    this.controls();
+  },
+  async saveMaterials(signal) {
+    const selected = this.materialCandidates.filter(candidate => this.materialSelected.has(candidate.url) && !this.materialSaved.has(candidate.url));
+    if (!this.materialTarget || !selected.length) throw new Error("请先核对仓库内容及论文出处，并勾选要关联的代码链接。");
+    // Use the extraction target even if the main-window selection has changed.
+    const results = await Search4PaperMaterials.saveConfirmed(this.Zotero, this.materialTarget, selected, { signal });
+    for (const result of results) { this.materialSaved.add(result.url); this.materialSelected.delete(result.url); }
+    this.renderMaterials();
+    this.status(`已为“${this.materialTarget.title}”新增 ${results.filter(r => r.status === "created").length} 条代码仓库笔记；`
+      + `已有 ${results.filter(r => r.status === "existing").length} 条关联保持不变。链接和原文证据已保存在该论文的子笔记中。`);
+  },
   init() {
-    const pages = ["search", "fulltext", "discovery"];
+    const pages = ["search", "fulltext", "discovery", "materials"];
     for (const page of pages) {
       const tab = this.$("tab-" + page);
       tab.addEventListener("click", () => this.switchPage(page));
@@ -631,6 +770,9 @@ var Search4PaperUI = {
     this.$("discovery-clear").addEventListener("click", () => { this.discoverySelected.clear(); this.renderDiscovery(); });
     this.$("discovery-import").addEventListener("click", () => this.operation(signal => this.importDiscovery(signal)));
     this.$("discovery-source").addEventListener("click", () => this.Zotero.launchURL(this.discoveryActive.url));
+    this.$("materials-find").addEventListener("click", () => this.operation(signal => this.findMaterials(signal)));
+    this.$("materials-save").addEventListener("click", () => this.operation(signal => this.saveMaterials(signal)));
+    this.$("materials-cancel").addEventListener("click", () => { if (this.operationPage === "materials") this.controller?.abort(); });
     for (const field of new Set(Object.values(Search4PaperCore.CONFERENCE_CATEGORIES).map(venue => venue.field))) {
       this.$("venue-field").add(new Option(field, field));
     }
@@ -641,8 +783,9 @@ var Search4PaperUI = {
     for (const input of document.querySelectorAll(".query input, .query select, .filter input")) {
       input.addEventListener("input", () => {
         this.updateQuerySummary();
+        if (input.id === "conference" || input.id === "year") this.updateSourceSupport();
         this.filtersDirty = true; this.controls();
-        this.status("检索条件已修改，请应用筛选；更换会议或年份后请重新搜索。");
+        this.status("检索条件已修改，请应用筛选；更换会议、期刊或年份后请重新搜索。");
       });
     }
     this.$("fetch").addEventListener("click", () => this.operation(signal => this.fetchPapers(signal)));

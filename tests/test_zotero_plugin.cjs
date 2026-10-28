@@ -17,7 +17,7 @@ const fetchWith = request => core.fetchAccepted(2026, { request });
 test('selecting current results enables import for all supported conferences', () => {
   const controls = new Map(['fetch', 'refresh-papers', 'conference', 'cancel', 'filter', 'import', 'select-page', 'clear',
     'enrich-abstracts', 'previous', 'next', 'source', 'tab-search', 'tab-discovery', 'tab-fulltext', 'fulltext-cancel',
-    'discovery-cancel','discovery-import','discovery-source'].map(id => [id, {}]));
+    'discovery-cancel','discovery-import','discovery-source','tab-materials','materials-cancel','materials-save'].map(id => [id, {}]));
   const context = { window: { arguments: [{ Zotero: {} }], addEventListener() {} },
     document: { querySelectorAll: () => [...controls.values()] } };
   vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/search.js'), 'utf8'), context);
@@ -236,7 +236,7 @@ test('local metadata is isolated by both conference and year; existing ICML file
     assert.equal(core.validateMetadata(saved, 2026, conference), saved);
     assert.throws(() => core.validateMetadata(saved, 2025, conference), /年份不一致/);
     for (const other of core.CONFERENCES.filter(c => c !== conference)) {
-      assert.throws(() => core.validateMetadata(saved, 2026, other), /会议或年份不一致/);
+      assert.throws(() => core.validateMetadata(saved, 2026, other), /会议、期刊或年份不一致/);
       const wrongPaper = { ...saved, papers: [{ ...saved.papers[0], venueID: core.venueID(other, 2026) }] };
       assert.throws(() => core.validateMetadata(wrongPaper, 2026, conference), /会议、年份不一致/);
     }
@@ -534,6 +534,65 @@ test('tab switches preserve search state and keep in-flight status/cancellation 
   assert.equal(ui.$('page-fulltext').hidden, true);
 });
 
+test('material candidates require explicit selection and remain attached to the extraction target',async()=>{
+  let selection=[{id:1}],release,saved;
+  const candidate={url:'https://example.org/code',evidence:[{quote:'Our code'}]};
+  const Zotero={getActiveZoteroPane:()=>({getSelectedItems:()=>selection})};
+  const ui=workflowUI(Zotero,{},undefined,undefined,undefined,undefined,undefined,{
+    Search4PaperMaterials:{snapshot:item=>({itemID:item.id,title:'Paper '+item.id}),
+      discover:async()=>{await new Promise(resolve=>{release=resolve;});return {candidates:[candidate],checked:['论文网页']};},
+      saveConfirmed:async(_z,target,candidates)=>{saved={target,candidates};return [{url:candidate.url,status:'created'}];}}
+  });
+  ui.renderMaterials=()=>ui.controls();ui.switchPage('materials');
+  const pending=ui.findMaterials(new AbortController().signal);
+  selection=[{id:2}];release();await pending;
+  assert.equal(ui.materialTarget.itemID,1);assert.equal(ui.materialSelected.size,0);assert.equal(ui.$('materials-save').disabled,true);
+  await assert.rejects(ui.saveMaterials(new AbortController().signal),/勾选/);assert.equal(saved,undefined);
+  ui.materialSelected.add(candidate.url);await ui.saveMaterials(new AbortController().signal);
+  assert.equal(saved.target.itemID,1);assert.equal(saved.candidates[0],candidate);
+  assert.equal(ui.materialSaved.has(candidate.url),true);assert.equal(ui.$('materials-save').disabled,true);
+  assert.match(ui.$('materials-status').textContent,/Paper 1/);
+  ui.switchPage('search');ui.switchPage('materials');assert.equal(ui.materialTarget.itemID,1);
+});
+
+test('material cancellation stays on its owning tab and cannot publish late candidates',async()=>{
+  let release;
+  const ui=workflowUI({getActiveZoteroPane:()=>({getSelectedItems:()=>[{id:1}]})},{},undefined,undefined,undefined,undefined,undefined,{
+    Search4PaperMaterials:{snapshot:()=>({itemID:1,title:'Paper'}),discover:async()=>{
+      await new Promise(resolve=>{release=resolve;});return {candidates:[{url:'https://example.org/code'}],checked:['page']};}}
+  });
+  ui.renderMaterials=()=>ui.controls();ui.switchPage('materials');
+  const pending=ui.operation(signal=>ui.findMaterials(signal));
+  assert.equal(ui.$('materials-cancel').disabled,false);assert.equal(ui.$('cancel').disabled,true);
+  ui.switchPage('search');ui.controller.abort();release();await pending;
+  assert.equal(ui.materialCandidates.length,0);assert.equal(ui.$('materials-save').disabled,true);
+  assert.match(ui.$('materials-status').textContent,/取消/);assert.match(ui.$('materials-coverage').textContent,/未完成/);
+});
+
+test('HTML requests retain the final URL for relative material links without changing JSON requests',async()=>{
+  let options;
+  const ui=workflowUI({HTTP:{request:async(_method,_url,value)=>{options=value;return {response:'<html></html>',responseURL:'https://publisher.example/papers/1/'};}}});
+  const page=await ui.request('https://doi.org/10.1234/paper',new AbortController().signal,'html');
+  assert.equal(options.responseType,'text');assert.equal(page.url,'https://publisher.example/papers/1/');assert.equal(page.body,'<html></html>');
+  assert.equal(await ui.request('https://example.org/data',new AbortController().signal),'<html></html>');
+  assert.equal(options.responseType,'json');
+  ui.Zotero.HTTP.request=async()=>{throw Object.assign(new Error('Not found'),{status:404});};
+  await assert.rejects(()=>ui.request('https://example.org/removed',new AbortController().signal,'html'),/HTTP 404.*\n该论文来源地址不存在/);
+});
+
+test('GitHub requests keep error status and empty-repository evidence without sending API headers to other sites',async()=>{
+  let options;
+  const ui=workflowUI({HTTP:{request:async(_method,_url,value)=>{
+    options=value;throw Object.assign(Error('Conflict'),{status:409,xmlhttp:{response:{message:'Git Repository is empty.'}}});
+  }}});
+  await assert.rejects(()=>ui.request('https://api.github.com/repos/example/graph',new AbortController().signal),error=>{
+    assert.equal(error.status,409);assert.equal(error.apiMessage,'Git Repository is empty.');return true;
+  });
+  assert.equal(options.headers.Accept,'application/vnd.github+json');assert.equal(options.headers.Authorization,undefined);
+  await assert.rejects(()=>ui.request('https://example.org/',new AbortController().signal));
+  assert.equal(options.headers.Accept,undefined);
+});
+
 test('full-text action snapshots current Zotero selection, routes existing mechanisms in order, and isolates failures', async () => {
   const calls = [];
   const item = (id, url) => ({id, libraryID: 1, isRegularItem: () => true, getField: f => f === 'title' ? 'Paper '+id : url});
@@ -636,24 +695,25 @@ test('full-text flow resolves a missing IEEE URL then continues with login or na
   }
 });
 
-test('CCF filters use the existing 2026 catalogue and intersect without adding sources',()=>{
+test('CCF filters match the existing 2026 catalogue for conferences and A journals',()=>{
   const catalog=JSON.parse(readFileSync(require.resolve('../code/ccf_venues.json'),'utf8')).venues;
-  assert.deepEqual(Object.keys(core.CONFERENCE_CATEGORIES),core.CONFERENCES);
-  for(const name of core.CONFERENCES){
-    const entry=catalog.find(v=>v.abbreviation===(name==='KDD'?'SIGKDD':name)&&v.type==='会议'&&(name!=='FSE'||v.category==='A'));
+  assert.deepEqual(Object.keys(core.CONFERENCE_CATEGORIES),core.VENUES);
+  for(const name of core.VENUES){
+    const entry=catalog.find(v=>v.abbreviation===(name==='KDD'?'SIGKDD':name)&&v.type===(core.JOURNAL_SOURCES[name]?'期刊':'会议')&&(name!=='FSE'||v.category==='A'));
     assert.deepEqual(core.CONFERENCE_CATEGORIES[name],{field:entry.professional_field,type:entry.type,rank:entry.category});
   }
-  assert.deepEqual(core.filterConferences(),core.CONFERENCES);
+  assert.deepEqual(core.filterConferences(),core.VENUES);
   assert.deepEqual(core.filterConferences({field:'人工智能',type:'会议',rank:'B'}),['EMNLP','ECCV']);
   assert.deepEqual(core.filterConferences({field:'网络与信息安全',rank:'A'}),['CRYPTO','EUROCRYPT','USENIX Security','CCS','NDSS']);
-  assert.deepEqual(core.filterConferences({field:'数据库/数据挖掘/内容检索'}),['ICDE','SIGMOD','KDD','SIGIR','VLDB']);
+  assert.deepEqual(core.filterConferences({field:'数据库/数据挖掘/内容检索'}),['ICDE','SIGMOD','KDD','SIGIR','VLDB','TKDE']);
   assert.deepEqual(core.filterConferences({field:'交叉/综合/新兴'}),['WWW']);
-  assert.deepEqual(core.filterConferences({type:'期刊'}),[]);
+  assert.deepEqual(core.filterConferences({type:'期刊'}),['JMLR','TPAMI','TKDE']);
   assert.deepEqual(core.filterConferences({rank:'C'}),[]);
 });
 
 test('conference filters retain compatible selection and results, and disable searches for empty combinations',()=>{
   const ui=workflowUI(),select=ui.$('conference');
+  ui.$('year').value='2026';
   select.options=[];select.add=o=>select.options.push(o);select.replaceChildren=()=>{select.options=[];};
   Object.defineProperty(select,'selectedOptions',{get(){return this.options.filter(option=>option.selected);}});
   select.value='ICML';ui.loadedTargets=[{conference:'ICML',year:2026}];ui.filtersDirty=false;
@@ -670,6 +730,10 @@ test('conference filters retain compatible selection and results, and disable se
   assert.equal(ui.$('import').disabled,true);assert.match(ui.$('venue-summary').textContent,/暂无已支持来源/);
   ui.$('venue-type').value='会议';ui.updateConferenceOptions();
   assert.equal(ui.selectedConferences().join(','),'EMNLP');assert.equal(select.disabled,false);assert.equal(ui.$('fetch').disabled,false);
+  ui.$('venue-type').value='期刊';ui.$('venue-rank').value='A';ui.$('venue-field').value='';ui.updateConferenceOptions();
+  assert.deepEqual(select.options.map(o=>o.value),['JMLR','TPAMI','TKDE']);assert.equal(select.size,3);
+  assert.equal(ui.selectedConferences().join(','),'JMLR');assert.equal(ui.$('fetch').disabled,false);
+  assert.match(ui.$('venue-summary').textContent,/26 个会议、3 本期刊/);
 });
 
 test('multi-conference and year-range selection forms the Cartesian target set with bounded validation',()=>{
@@ -681,6 +745,61 @@ test('multi-conference and year-range selection forms the Cartesian target set w
   ]));
   ui.$('year').value='2026-2024';assert.throws(()=>ui.selectedYears(),/递增/);
   ui.$('year').value='2020-2031';assert.throws(()=>ui.selectedYears(),/最多跨 10 年/);
+});
+
+test('support catalogue distinguishes verified years, publication-dependent rules and paper tracks',()=>{
+  for(const conference of core.CONFERENCES){
+    const support=core.sourceSupport(conference);
+    assert.ok(support.label&&support.scope,conference);
+    if([...Object.keys(core.DATABASE_SOURCES),...Object.keys(core.SYSTEMS_SOURCES),'ICDE'].includes(conference)){
+      assert.deepEqual(support.years,[2025,2026]);assert.equal(support.conditional,false);
+      assert.equal(core.sourceYearError(conference,2026),'');
+      assert.match(core.sourceYearError(conference,2024),/支持年份：2025、2026/);
+      assert.match(core.sourceYearError(conference,2027),/尚未适配/);
+    }else assert.equal(support.conditional,true);
+  }
+  for(const [conference,year] of [['AAAI',2009],['EMNLP',2006],['CVPR',2012],['ICCV',2026],['ECCV',2025],['ECCV',2016]])
+    assert.match(core.sourceYearError(conference,year),/尚未适配/);
+  assert.equal(core.sourceYearError('ICCV',2025),'');assert.equal(core.sourceYearError('ECCV',2026),'');
+  assert.equal(core.sourceYearError('ICML',2027),'');assert.match(core.sourceSupport('ICML').label,/须已公开/);
+  assert.match(core.sourceSupport('ACL').scope,/long.*不含 Findings/);
+  assert.match(core.sourceSupport('VLDB').scope,/PVLDB 19.*1–11/);
+  assert.match(core.sourceSupport('FSE').scope,/Research Papers.*不含 Industry/);
+});
+
+test('unsupported conference-year combinations fail as a whole before requests or cache reads',async()=>{
+  let reads=0;
+  const ui=workflowUI({}, {},undefined,undefined,undefined,undefined,undefined,{
+    IOUtils:{exists:async()=>{reads++;throw Error('must not read');}},
+    Search4PaperSources:{fetchAccepted:async()=>{reads++;throw Error('must not request');}}
+  });
+  ui.$('conference').selectedOptions=[{value:'ICML'},{value:'SIGMOD'},{value:'ICCV'}];ui.$('year').value='2025-2027';
+  ui.readQuery=()=>({terms:['paper'],operator:'OR',fields:['title']});
+  assert.throws(()=>ui.selectedTargets(),error=>/SIGMOD 2027/.test(error.message)&&/ICCV 2026/.test(error.message));
+  await assert.rejects(ui.fetchPapers(new AbortController().signal),/尚未适配/);
+  assert.equal(reads,0);
+  const scope={Search4PaperCore:core};
+  vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/sources.js'),'utf8'),scope);
+  for(const [conference,year] of [['SIGMOD',2027],['ICDE',2024],['ICCV',2026],['ECCV',2025]])
+    await assert.rejects(scope.Search4PaperSources.fetchAccepted(year,{conference,request:()=>{reads++;}}),/尚未适配/);
+  assert.equal(reads,0);
+});
+
+test('support hints update on selection, show source limitations and re-enable valid years',()=>{
+  const ui=workflowUI(),select=ui.$('conference');
+  select.options=core.CONFERENCES.map(value=>({value}));select.selectedOptions=[{value:'SIGIR'}];ui.$('year').value='2026';
+  ui.updateSourceSupport();ui.controls();
+  assert.equal(ui.supportError,'');assert.equal(ui.$('fetch').disabled,false);
+  assert.match(ui.$('year-support').textContent,/官方初始录用名单/);
+  assert.match(ui.$('support-summary').textContent,/26 个会议/);
+  assert.match(ui.$('support-rows').innerHTML,/class="selected-source"><td>SIGIR/);
+  ui.$('year').value='2027';ui.updateSourceSupport();ui.controls();
+  assert.match(ui.$('year-support').textContent,/SIGIR 2027.*2025、2026/);
+  assert.equal(ui.$('fetch').disabled,true);assert.equal(ui.$('refresh-papers').disabled,true);
+  select.selectedOptions=[{value:'ICML'}];ui.updateSourceSupport();ui.controls();
+  assert.match(ui.$('year-support').textContent,/须已公开/);assert.equal(ui.$('fetch').disabled,false);
+  ui.$('year').value='';ui.updateSourceSupport();ui.controls();
+  assert.match(ui.$('year-support').textContent,/至少输入一个年份/);assert.equal(ui.$('fetch').disabled,true);
 });
 
 test('joint retrieval validates and combines every selected conference-year cache',async()=>{

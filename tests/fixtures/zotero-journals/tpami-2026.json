@@ -1,0 +1,204 @@
+{
+  "issue": "9",
+  "published-print": {
+    "date-parts": [
+      [
+        2026,
+        9
+      ]
+    ]
+  },
+  "DOI": "10.1109/tpami.2024.3392013",
+  "type": "journal-article",
+  "page": "10192-10206",
+  "title": [
+    "Consistency-Aware Anchor Pyramid Network for Crowd Localization"
+  ],
+  "volume": "48",
+  "author": [
+    {
+      "ORCID": "https://orcid.org/0000-0003-2638-4324",
+      "authenticated-orcid": false,
+      "given": "Xinyan",
+      "family": "Liu",
+      "sequence": "first",
+      "affiliation": [
+        {
+          "name": "University of Chinese Academy of Sciences",
+          "place": [
+            "Beijing, China"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0003-3954-2387",
+      "authenticated-orcid": false,
+      "given": "Guorong",
+      "family": "Li",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "University of Chinese Academy of Sciences",
+          "place": [
+            "Beijing, China"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0003-4312-5682",
+      "authenticated-orcid": false,
+      "given": "Yuankai",
+      "family": "Qi",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "Macquarie University",
+          "place": [
+            "Sydney, NSW, Australia"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0002-9970-5152",
+      "authenticated-orcid": false,
+      "given": "Zhenjun",
+      "family": "Han",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "University of Chinese Academy of Sciences",
+          "place": [
+            "Beijing, China"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0003-3027-8364",
+      "authenticated-orcid": false,
+      "given": "Anton van den",
+      "family": "Hengel",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "The University of Adelaide",
+          "place": [
+            "Adelaide, SA, Australia"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0002-6597-7248",
+      "authenticated-orcid": false,
+      "given": "Nicu",
+      "family": "Sebe",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "University of Trento",
+          "place": [
+            "Trento, Italy"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0003-4848-2304",
+      "authenticated-orcid": false,
+      "given": "Ming-Hsuan",
+      "family": "Yang",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "University of California at Merced",
+          "place": [
+            "Merced, CA, USA"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0001-7542-296X",
+      "authenticated-orcid": false,
+      "given": "Qingming",
+      "family": "Huang",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "University of Chinese Academy of Sciences",
+          "place": [
+            "Beijing, China"
+          ]
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    }
+  ],
+  "container-title": [
+    "IEEE Transactions on Pattern Analysis and Machine Intelligence"
+  ],
+  "ISSN": [
+    "0162-8828",
+    "2160-9292",
+    "1939-3539"
+  ],
+  "published": {
+    "date-parts": [
+      [
+        2026,
+        9
+      ]
+    ]
+  }
+}

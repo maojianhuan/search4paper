@@ -17,6 +17,15 @@ select { padding-inline-end: 32px; }
 #year { width: 170px; }
 #conference { width: 145px; }
 .venue-filters select { width: auto; }
+#source-support { flex-shrink: 0; font-size: 12px; }
+#source-support summary { cursor: pointer; padding-block: 3px; }
+.support-scroll { max-height: 180px; overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas); }
+.support-scroll table { font: inherit; }
+.support-scroll td:first-child { width: auto; white-space: nowrap; }
+.support-scroll td:nth-child(2) { min-width: 180px; }
+.selected-source { background: color-mix(in srgb, Highlight 9%, Canvas); }
+#year-support { white-space: pre-wrap; max-height: 76px; overflow: auto; flex-shrink: 0; }
+#year-support.error { color: light-dark(#ac2525, #ff9999); }
 #operator { width: 165px; }
 button { color: ButtonText; background: ButtonFace; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); border-radius: 5px; padding: 7px 10px; font: inherit; cursor: pointer; }
 button:hover:not(:disabled) { background: color-mix(in srgb, Highlight 12%, Canvas); }
@@ -61,3 +70,18 @@ footer { justify-content: space-between; }
 .openalex-settings input { min-width: 260px; }
 .discovery-filters input:not([type=checkbox]) { width: 72px; padding: 4px 6px; }
 .discovery-filters select { width: auto; padding-block: 4px; }
+.materials-scroll { flex: 1; min-height: 180px; overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas); border-radius: 5px; }
+.materials-scroll table { table-layout: fixed; font-size: 12px; }
+.materials-scroll th:first-child { width: 60px; }
+.materials-scroll th:nth-child(2) { width: 24%; }
+.materials-scroll th:nth-child(3) { width: 43%; }
+.materials-scroll td { vertical-align: top; overflow-wrap: anywhere; }
+.materials-scroll p { margin: 5px 0; }
+.materials-scroll blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid color-mix(in srgb, Highlight 40%, Canvas); white-space: pre-wrap; line-height: 1.6; }
+.materials-scroll button { font-size: 12px; padding: 4px 7px; }
+.materials-scroll summary { cursor: pointer; }
+.materials-scroll button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.repository-state { display: block; padding: 5px 7px; background: color-mix(in srgb, CanvasText 8%, Canvas); border-radius: 4px; }
+.repository-code { color: light-dark(#176232, #9bdbb4); background: color-mix(in srgb, #219653 12%, Canvas); }
+.repository-unavailable, .repository-partial { color: light-dark(#854800, #ffc47d); }
+#materials-empty { padding: 18px; }

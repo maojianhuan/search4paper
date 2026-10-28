@@ -34,7 +34,7 @@ test('KDD rejects non-research, rejected, archive uploads, malformed and partial
 });
 test('new sources reject unverified years before network access',async()=>{
   for(const conference of Object.keys(core.DATABASE_SOURCES)){
-    await assert.rejects(db.fetchAccepted(conference,2026,{request:()=>{throw new Error('must not request');}}),/尚未核实/);
+    await assert.rejects(db.fetchAccepted(conference,2027,{request:()=>{throw new Error('must not request');}}),/尚未适配.*2025、2026/);
   }
 });
 test('new source caches preserve mapping and isolate conference/year; invalid VLDB issue fails',()=>{

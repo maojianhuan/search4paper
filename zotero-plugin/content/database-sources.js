@@ -7,7 +7,7 @@ var Search4PaperDatabaseSources = (() => {
   const titleKey = title => encodeURIComponent(title.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim());
   function configFor(conference, year) {
     const config = configs[conference]?.[year];
-    if (!config) throw new Error(`${conference} ${year} 尚未核实官方 Research Track 来源；当前已核实年份：2025。`);
+    if (!config) throw new Error(Search4PaperCore.sourceYearError(conference, year));
     return config;
   }
   function paper(conference, year, fields) {
@@ -18,7 +18,8 @@ var Search4PaperDatabaseSources = (() => {
     return { source: conference.toLowerCase(), year, venueID: Search4PaperCore.venueID(conference, year),
       id: `${year}:${titleKey(fields.title)}`, number: null, sourceURL: config.sourceURL, sourceMetadata: config,
       abstract: "", keywords: "", tldr: "", doi: "", pdfURL: "", bibtex: "", detailURL: "",
-      url: config.sourceURL, track: "Research Papers", ...fields };
+      url: config.sourceURL, track: "Research Papers",
+      ...(config.warning ? { retrievalWarning: config.warning } : {}), ...fields };
   }
   function merge(papers, listField) {
     const seen = new Map();
@@ -63,17 +64,20 @@ var Search4PaperDatabaseSources = (() => {
   function parseSIGMOD(raw, year) {
     const config = configFor("SIGMOD", year), doc = html(raw), papers = [];
     if (!text(doc.querySelector("title")).includes(String(year)) || !text(doc.body).includes("Accepted Papers for SIGMOD")) throw new Error("SIGMOD 页面会议/年份不符。");
-    const rounds = [...doc.querySelectorAll('h3[id^="round"]')];
-    if (rounds.length !== config.rounds.length || config.rounds.some(id => !rounds.some(h => h.id === id))) throw new Error("SIGMOD 录用轮次不完整。");
+    const rounds = year === 2026 ? [...doc.querySelectorAll("h3, h4")].filter(h => /^Round [1-4]$/.test(text(h)))
+      : [...doc.querySelectorAll('h3[id^="round"]')];
+    const roundID = h => year === 2026 ? `round${text(h).slice(-1)}` : h.id;
+    if (rounds.length !== config.rounds.length || config.rounds.some(id => !rounds.some(h => roundID(h) === id))) throw new Error("SIGMOD 录用轮次不完整。");
     for (const heading of rounds) {
       const list = heading.nextElementSibling;
       if (list?.localName !== "ul" || !list.children.length) throw new Error("SIGMOD 轮次缺少论文列表。");
       for (const li of list.children) {
         const title = li.querySelector("b"), br = li.querySelector("br");
-        if (li.localName !== "li" || !title || !br) throw new Error("SIGMOD 论文结构无法识别。");
-        let authorText = ""; for (let n = br.nextSibling; n; n = n.nextSibling) authorText += n.textContent;
+        if (li.localName !== "li" || !title || (year === 2025 && !br)) throw new Error("SIGMOD 论文结构无法识别。");
+        // 2026 Round 3 puts author text directly after <b>, without a <br>.
+        let authorText = ""; for (let n = (year === 2026 ? title : br).nextSibling; n; n = n.nextSibling) authorText += n.textContent;
         papers.push(paper("SIGMOD", year, { title: text(title), authors: affiliatedAuthors(authorText),
-          rounds: [heading.id], ...links(title, config.sourceURL) }));
+          rounds: [roundID(heading)], ...links(title, config.sourceURL) }));
       }
     }
     return merge(papers, "rounds");
@@ -81,6 +85,34 @@ var Search4PaperDatabaseSources = (() => {
   function parseSIGIR(raw, year) {
     const config = configFor("SIGIR", year), doc = html(raw), papers = [];
     if (!text(doc.querySelector("title")).includes(`SIGIR ${year}`)) throw new Error("SIGIR 页面年份不符。");
+    if (year === 2026) {
+      // The official page embeds its static acceptance list as JSON string data.
+      // Decode the data only; never execute the website's scripts.
+      const lists = new Set();
+      for (const script of doc.querySelectorAll("script:not([src])")) {
+        const match = script.textContent.trim().match(/^self\.__next_f\.push\(([\s\S]+)\);?$/);
+        if (!match) continue;
+        const payload = JSON.parse(match[1]), content = payload[1];
+        if (typeof content === "string" && content.includes("<h2>Full Papers</h2>")
+            && content.includes("<h2>Short Papers</h2>")) lists.add(content);
+      }
+      if (lists.size !== 1) throw new Error("SIGIR 2026 官方录用名单数据缺失或不唯一。");
+      const list = html([...lists][0]);
+      for (const [track, prefix] of [["Full Papers", "[fp]"], ["Short Papers", "[sp]"]]) {
+        const headings = [...list.querySelectorAll("h2")].filter(h => text(h) === track);
+        if (headings.length !== 1) throw new Error(`SIGIR 缺少唯一的 ${track} 列表。`);
+        let count = 0;
+        for (let row = headings[0].nextElementSibling; row && row.localName !== "h2"; row = row.nextElementSibling) {
+          const title = row.querySelector("i"), br = row.querySelector("br");
+          if (row.localName !== "p" || !title || !br || !text(row).startsWith(prefix)) throw new Error(`SIGIR ${track} 论文结构无法识别。`);
+          let names = ""; for (let n = br.nextSibling; n; n = n.nextSibling) names += n.textContent;
+          papers.push(paper("SIGIR", year, { title: text(title), authors: names.trim().split(/\s*,\s*/), track }));
+          count++;
+        }
+        if (!count) throw new Error(`SIGIR ${track} 列表为空。`);
+      }
+      return merge(papers);
+    }
     for (const track of config.tracks) {
       const heading = doc.getElementById(track), list = heading?.nextElementSibling;
       if (heading?.localName !== "h2" || list?.localName !== "ul" || !list.children.length) throw new Error(`SIGIR 缺少 ${track} 研究论文列表。`);
@@ -105,12 +137,12 @@ var Search4PaperDatabaseSources = (() => {
       for (const record of records) {
         if (record.title === "Front Matter") continue;
         if (record.issue !== issue || !Number.isInteger(record.start_page) || !Number.isInteger(record.end_page)
-          || record.end_page < record.start_page || !/^https:\/\/www\.vldb\.org\/pvldb\/vol18\/p\d+-[^/]+\.pdf$/.test(record.pdf || "")) {
+          || record.end_page < record.start_page || !new RegExp(`^https://www\\.vldb\\.org/pvldb/vol${config.volume}/p\\d+-[^/]+\\.pdf$`).test(record.pdf || "")) {
           throw new Error("PVLDB 论文期号、页码或正式 PDF 链接异常。");
         }
         papers.push(paper("VLDB", year, { id: `${year}:${record.pdf.split("/").pop()}`, title: record.title,
           authors: record.authors.split(/\s*,\s*/), volume: config.volume, issue,
-          track: "Research Track (PVLDB 18, issues 1–11)", publicationTitle: "Proceedings of the VLDB Endowment",
+          track: `Research Track (PVLDB ${config.volume}, issues ${config.issues[0]}–${config.issues.at(-1)})`, publicationTitle: "Proceedings of the VLDB Endowment",
           pages: `${record.start_page}-${record.end_page}`, url: record.pdf, pdfURL: record.pdf,
           abstract: record.abstract || "", doi: record.doi || "", date: record.date || "" }));
         count++;
@@ -160,6 +192,27 @@ var Search4PaperDatabaseSources = (() => {
   }
   function parseKDDOfficial(raw, year) {
     const config = configFor("KDD", year), doc = html(raw), papers = [];
+    if (year === 2026) {
+      if (!text(doc.querySelector("title")).includes("Papers – KDD 2026")) throw new Error("KDD 官方页面不是 2026 论文名单。");
+      for (const cycle of config.cycles) {
+        const pattern = new RegExp(`\\bconst ${cycle}Papers = (\\[[^\\r\\n]+\\])\\.map\\(`);
+        const matches = [...doc.querySelectorAll("script:not([src])")].map(s => s.textContent.match(pattern)).filter(Boolean);
+        if (matches.length !== 1) throw new Error(`KDD 官方 ${cycle} 名单缺失或不唯一。`);
+        const rows = JSON.parse(matches[0][1]);
+        if (!Array.isArray(rows) || !rows.length || rows.some(row => !row || typeof row.track !== "string")) throw new Error(`KDD ${cycle} 轨道信息不完整。`);
+        let count = 0;
+        for (const row of rows) {
+          if (row.track !== "rtp") continue;
+          const doi = row.url?.match(/^https:\/\/doi\.org\/(10\.1145\/[^?#\s]+)$/)?.[1];
+          if (!doi || typeof row.authors !== "string") throw new Error("KDD Research Track 的 DOI 或作者格式异常。");
+          papers.push(paper("KDD", year, { title: row.title, authors: affiliatedAuthors(row.authors), doi,
+            url: row.url, detailURL: row.url, cycles: [cycle], track: "Research Track", retrievalSource: "Official Research Track List" }));
+          count++;
+        }
+        if (!count) throw new Error(`KDD ${cycle} 没有 Research Track 论文。`);
+      }
+      return merge(papers, "cycles");
+    }
     if (!text(doc.querySelector("title")).includes(`KDD ${year}`) || !text(doc.querySelector("h2")).includes("Research Track Papers")) throw new Error("KDD 官方页面不是所选年份 Research Track。");
     const tabs = doc.querySelector(".plethoraplugins-tabs-container");
     const headings = [...(tabs?.querySelectorAll(".plethoraplugins-tabs a") || [])];
@@ -184,7 +237,7 @@ var Search4PaperDatabaseSources = (() => {
     const config = configFor(conference, year), { request, signal } = settings;
     signal?.throwIfAborted();
     let warning = "";
-    if (conference === "KDD") {
+    if (conference === "KDD" && config.acceptedVenues) {
       try { return await fetchKDDOpenReview(year, settings); }
       catch (error) {
         if (!error.openReviewUnavailable) throw error;

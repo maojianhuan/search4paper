@@ -56,5 +56,40 @@ async function runSearch4PaperSystemsFixtures(fixtures) {
     check(papers.every(p=>typeof p.abstract==='string'&&typeof p.keywords==='string'&&typeof p.tldr==='string'),'missing optional metadata '+name);
     check(c.identities({extra:`Source ID: ${papers[0].source}:${papers[0].id}`}).has(`source:${papers[0].source}:${papers[0].id}`),'repeat import identity '+name);
   }
+  const lists26=[];
+  for(const [name,file] of [['FAST','fast'],['NSDI','nsdi'],['OSDI','osdi'],['USENIX Security','security']]){
+    const config=c.SYSTEMS_SOURCES[name][2026],provenance={mode:'final-program',urls:[config.sourceURL]};
+    const papers=a.parseUSENIX(fixtures[file+'-2026.html'],name,2026,config.sourceURL,provenance);
+    check(papers.length===2&&papers.every(p=>p.abstract),'USENIX 2026 research papers and abstracts '+name);
+    throws(()=>a.parseUSENIX(fixtures[file+'-2025.html'],name,2026,config.sourceURL,provenance),'USENIX rejects previous year '+name);
+    throws(()=>a.parseUSENIX(fixtures[file+'-2026.html'].replace('/presentation/','/unverified/'),name,2026,config.sourceURL,provenance),'USENIX rejects unverified detail paths '+name);
+    lists26.push([name,papers]);
+  }
+  check(lists26[3][1].some(p=>p.detailURL.endsWith('/usenixsecurity26/yu-jerry')),'Security 2026 official direct detail path');
+  const ccs26=a.parseCCS(fixtures['ccs-2026.html'],2026);
+  check(ccs26.length===2&&ccs26[0].authors[0]==='Hugo Hue'&&ccs26[0].authors.length===5,'CCS 2026 HTML tables and br-separated authors');
+  check(ccs26[0].cycles[0]==='firstCycle'&&ccs26[1].cycles[0]==='secondCycle','CCS 2026 retains both cycles');
+  throws(()=>a.parseCCS(fixtures['ccs-2026.html'].replace('Second Cycle','Unknown'),2026),'CCS missing 2026 cycle fails');
+  throws(()=>a.parseCCS(fixtures['ccs-2026.html'].replace('CCS 2026','CCS 2025'),2026),'CCS previous year page fails');
+  lists26.push(['CCS',ccs26]);
+  const ndss26=a.parseNDSS(fixtures['ndss-2026.html'],2026);
+  check(ndss26.length===2&&ndss26[0].sourceMetadata.cycles.join()==='summer-cycle-2026,fall-cycle-2026','NDSS 2026 exact cycles');
+  throws(()=>a.parseNDSS(fixtures['ndss-2026.html'].replace('(1)','(99)'),2026),'NDSS 2026 incomplete list fails');
+  lists26.push(['NDSS',ndss26]);
+  const sig26=a.parseSIGCOMM(fixtures['sigcomm-2026.html'],2026);
+  check(sig26.length===24&&sig26.filter(p=>p.track==='Research Papers').length===18&&sig26.filter(p=>p.track==='Experience Papers').length===6,'SIGCOMM all main sessions; excludes sponsored/special sessions within same cell');
+  check(sig26.every(p=>p.doi&&p.retrievalWarning)&&sig26.some(p=>p.abstract),'SIGCOMM DOI, abstracts and official count discrepancy retained');
+  throws(()=>a.parseSIGCOMM(fixtures['sigcomm-2026.html'].replace('Research Session 18:','Special Session 18:'),2026),'SIGCOMM missing final-program session fails');
+  throws(()=>a.parseSIGCOMM(fixtures['sigcomm-2026.html'].replace('program below is final','program is preliminary'),2026),'SIGCOMM requires final program');
+  lists26.push(['SIGCOMM',sig26]);
+  const fse26=a.parseFSE(fixtures['fse-2026.html'],2026);
+  check(fse26.length===2&&fse26.every(p=>p.track==='Research Papers'&&p.doi),'FSE 2026 Research Papers');
+  lists26.push(['FSE',fse26]);
+  for(const [name,papers] of lists26){
+    const meta={schemaVersion:1,year:2026,venueID:c.venueID(name,2026),fetchedAt:new Date().toISOString(),paperCount:papers.length,papers};
+    check(c.validateMetadata(JSON.parse(JSON.stringify(meta)),2026,name).paperCount===papers.length,'2026 cache roundtrip '+name);
+    throws(()=>c.validateMetadata(meta,2025,name),'2026 cache isolated from 2025 '+name);
+    check(!!c.matchPaper(papers[0],{terms:[papers[0].title],operator:'AND',fields:['title']}),'2026 known title searchable '+name);
+  }
   return {ok:true,assertions};
 }

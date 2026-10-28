@@ -451,11 +451,14 @@ var Search4PaperSources = (() => {
   async function fetchAccepted(year, options) {
     const { conference, signal, request, onProgress = () => {} } = options;
     Search4PaperCore.venueID(conference, year);
+    const unsupported = Search4PaperCore.sourceYearError(conference, year);
+    if (unsupported) throw new Error(unsupported);
     if (Search4PaperCore.OPENREVIEW_CONFERENCES.includes(conference)) return Search4PaperCore.fetchAccepted(year, options);
     const settings = { ...options, onProgress };
     signal?.throwIfAborted();
     let papers;
-    if (["ACL", "EMNLP"].includes(conference)) {
+    if (Search4PaperCore.JOURNAL_SOURCES[conference]) papers = await Search4PaperJournalSources.fetchPublished(conference, year, settings);
+    else if (["ACL", "EMNLP"].includes(conference)) {
       if (conference === "EMNLP" && year < 2007) throw new Error("EMNLP 的 D 系列目录从 2007 年起；更早的 W 系列尚未适配。");
       const collection = year < 2020 ? `${conference === "ACL" ? "P" : "D"}${String(year).slice(-2)}` : `${year}.${conference.toLowerCase()}`;
       const raw = await request(`https://raw.githubusercontent.com/acl-org/acl-anthology/master/data/xml/${collection}.xml`, signal, "text");

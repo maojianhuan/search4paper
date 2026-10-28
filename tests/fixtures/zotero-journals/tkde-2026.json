@@ -1,0 +1,72 @@
+{
+  "issue": "7",
+  "published-print": {
+    "date-parts": [
+      [
+        2026,
+        7
+      ]
+    ]
+  },
+  "DOI": "10.1109/tkde.2024.3444608",
+  "type": "journal-article",
+  "page": "4556-4568",
+  "title": [
+    "Mining Triangle-Dense Subgraphs of a Fixed Size: Hardness, Lovász Extension and Applications"
+  ],
+  "volume": "38",
+  "author": [
+    {
+      "ORCID": "https://orcid.org/0000-0002-9330-0277",
+      "authenticated-orcid": false,
+      "given": "Aritra",
+      "family": "Konar",
+      "sequence": "first",
+      "affiliation": [
+        {
+          "name": "Department of Electrical Engineering (ESAT), KU Leuven, Leuven, Belgium"
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    },
+    {
+      "ORCID": "https://orcid.org/0000-0002-3385-7911",
+      "authenticated-orcid": false,
+      "given": "Nicholas D.",
+      "family": "Sidiropoulos",
+      "sequence": "additional",
+      "affiliation": [
+        {
+          "name": "Department of Electrical and Computer Engineering, University of Virginia, Charlottesville, VA, USA"
+        }
+      ],
+      "role": [
+        {
+          "vocabulary": "crossref",
+          "role": "author"
+        }
+      ]
+    }
+  ],
+  "container-title": [
+    "IEEE Transactions on Knowledge and Data Engineering"
+  ],
+  "ISSN": [
+    "1041-4347",
+    "1558-2191",
+    "2326-3865"
+  ],
+  "published": {
+    "date-parts": [
+      [
+        2026,
+        7
+      ]
+    ]
+  }
+}

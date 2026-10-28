@@ -9,7 +9,7 @@ const sources=scope.Search4PaperSystemsSources;
 test('eight official sources reject unverified years before requesting data',async()=>{
  assert.equal(Object.keys(core.SYSTEMS_SOURCES).length,8);
  for(const conference of Object.keys(core.SYSTEMS_SOURCES)){
-  await assert.rejects(sources.fetchAccepted(conference,2026,{request(){throw Error('must not fetch');}}),/尚未核实/);
+  await assert.rejects(sources.fetchAccepted(conference,2027,{request(){throw Error('must not fetch');}}),/尚未适配.*2025、2026/);
  }
 });
 test('new source caches and identities are isolated by source/year and retain provenance',()=>{
