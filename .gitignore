@@ -61,3 +61,6 @@ research_results/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Local literature research results
+research_output/

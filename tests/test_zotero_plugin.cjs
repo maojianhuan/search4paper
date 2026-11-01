@@ -40,8 +40,8 @@ test('selecting current results enables import for all supported conferences', (
   }
 });
 
-test('the twenty-six supported conferences include WWW with its exact OpenReview venue ID', async () => {
-  assert.deepEqual(core.CONFERENCES, ['ICML', 'NeurIPS', 'ICLR', 'AAAI', 'ACL', 'CVPR', 'ICCV', 'EMNLP', 'ECCV', 'CRYPTO', 'EUROCRYPT', 'ASIACRYPT', 'ICDE', 'SIGMOD', 'KDD', 'SIGIR', 'VLDB', 'FAST', 'NSDI', 'OSDI', 'USENIX Security', 'CCS', 'NDSS', 'SIGCOMM', 'FSE', 'WWW']);
+test('the thirty supported conferences include WWW with its exact OpenReview venue ID', async () => {
+  assert.deepEqual(core.CONFERENCES, ['ICML', 'NeurIPS', 'ICLR', 'AAAI', 'ACL', 'CVPR', 'ICCV', 'EMNLP', 'ECCV', 'CRYPTO', 'EUROCRYPT', 'ASIACRYPT', 'ICDE', 'SIGMOD', 'KDD', 'SIGIR', 'VLDB', 'FAST', 'NSDI', 'OSDI', 'USENIX Security', 'CCS', 'NDSS', 'SIGCOMM', 'FSE', 'WWW', 'IJCAI', 'ACM MM', 'IROS', 'ICRA']);
   for (const conference of ['ICML', 'NeurIPS', 'ICLR']) {
     for (const year of [2025, 2026]) assert.equal(core.venueID(conference, year), `${conference}.cc/${year}/Conference`);
   }
@@ -230,15 +230,17 @@ test('local metadata is isolated by both conference and year; existing ICML file
   const oldICML = metadata();
   assert.equal(core.validateMetadata(oldICML, 2026, 'ICML'), oldICML);
   for (const conference of core.CONFERENCES.filter(c => !core.DATABASE_SOURCES[c] && !core.SYSTEMS_SOURCES[c])) {
+    const year = core.sourceSupport(conference).years?.[0] || 2026;
     const saved = metadata();
-    saved.venueID = core.venueID(conference, 2026);
-    saved.papers[0] = samplePaper(conference, 2026);
-    assert.equal(core.validateMetadata(saved, 2026, conference), saved);
-    assert.throws(() => core.validateMetadata(saved, 2025, conference), /年份不一致/);
+    saved.year = year;
+    saved.venueID = core.venueID(conference, year);
+    saved.papers[0] = samplePaper(conference, year);
+    assert.equal(core.validateMetadata(saved, year, conference), saved);
+    assert.throws(() => core.validateMetadata(saved, year - 1, conference), /年份不一致/);
     for (const other of core.CONFERENCES.filter(c => c !== conference)) {
-      assert.throws(() => core.validateMetadata(saved, 2026, other), /会议、期刊或年份不一致/);
-      const wrongPaper = { ...saved, papers: [{ ...saved.papers[0], venueID: core.venueID(other, 2026) }] };
-      assert.throws(() => core.validateMetadata(wrongPaper, 2026, conference), /会议、年份不一致/);
+      assert.throws(() => core.validateMetadata(saved, year, other), /会议、期刊或年份不一致/);
+      const wrongPaper = { ...saved, papers: [{ ...saved.papers[0], venueID: core.venueID(other, year) }] };
+      assert.throws(() => core.validateMetadata(wrongPaper, year, conference), /会议、年份不一致/);
     }
   }
 });
@@ -294,6 +296,21 @@ test('evidence note records keywords and their operator without interpreting HTM
 });
 
 function samplePaper(conference, year = 2025) {
+  if (core.ROBOTICS_SOURCES[conference]) {
+    const config = core.ROBOTICS_SOURCES[conference][year], day = config.days[0];
+    const sourceURL = `https://ras.papercept.net/conferences/conferences/${config.code}/program/`;
+    return {id:`${year}:1`,year,venueID:core.venueID(conference,year),source:conference.toLowerCase(),sourceURL,
+      url:`${sourceURL}${config.code}_ContentListWeb_${day}.html#tuat1_01`,programDay:day,programAnchor:'tuat1_01',
+      track:'Regular Session',sessions:['TuAT1: Robot Learning'],title:'Robotics Paper',authors:['Example, Author'],
+      abstract:'',keywords:'',tldr:'',doi:'',pdfURL:'',bibtex:''};
+  }
+  if (conference === 'IJCAI' || conference === 'ACM MM') {
+    const ijcai = conference === 'IJCAI', sourceURL = ijcai ? `https://ijcai.org/proceedings/${year}/` : `https://acmmm${year}.org/accepted-regular-papers/`;
+    return { id:`${year}:1`, source:ijcai?'ijcai':'acmmm', year, venueID:core.venueID(conference,year),number:null,
+      sourceURL,url:ijcai?sourceURL+'1':sourceURL,track:ijcai?'Main Track':'Regular Papers',
+      title:'Time Series Anomaly Detection',authors:['Example Author'],abstract:'',keywords:'',tldr:'',bibtex:'',
+      doi:ijcai?`10.24963/ijcai.${year}/1`:'',pdfURL:ijcai?sourceURL+'0001.pdf':'' };
+  }
   if (conference === 'ICDE') return {id: `${year}:1`,source:'icde',year,venueID:core.venueID(conference,year),number:null,
     url:`https://ieee-icde.org/${year}/research-papers/`,sourceURL:`https://ieee-icde.org/${year}/research-papers/`,detailURL:'',ieeeURL:'',
     title:'Time Series Anomaly Detection',authors:['Example Author'],abstract:'',doi:'',keywords:'',tldr:'',pdfURL:'',bibtex:''};
@@ -703,12 +720,12 @@ test('CCF filters match the existing 2026 catalogue for conferences and A journa
     assert.deepEqual(core.CONFERENCE_CATEGORIES[name],{field:entry.professional_field,type:entry.type,rank:entry.category});
   }
   assert.deepEqual(core.filterConferences(),core.VENUES);
-  assert.deepEqual(core.filterConferences({field:'人工智能',type:'会议',rank:'B'}),['EMNLP','ECCV']);
+  assert.deepEqual(core.filterConferences({field:'人工智能',type:'会议',rank:'B'}),['EMNLP','ECCV','IJCAI','ICRA']);
   assert.deepEqual(core.filterConferences({field:'网络与信息安全',rank:'A'}),['CRYPTO','EUROCRYPT','USENIX Security','CCS','NDSS']);
   assert.deepEqual(core.filterConferences({field:'数据库/数据挖掘/内容检索'}),['ICDE','SIGMOD','KDD','SIGIR','VLDB','TKDE']);
   assert.deepEqual(core.filterConferences({field:'交叉/综合/新兴'}),['WWW']);
   assert.deepEqual(core.filterConferences({type:'期刊'}),['JMLR','TPAMI','TKDE']);
-  assert.deepEqual(core.filterConferences({rank:'C'}),[]);
+  assert.deepEqual(core.filterConferences({rank:'C'}),['IROS']);
 });
 
 test('conference filters retain compatible selection and results, and disable searches for empty combinations',()=>{
@@ -721,7 +738,7 @@ test('conference filters retain compatible selection and results, and disable se
   ui.$('venue-field').value='人工智能';ui.updateConferenceOptions();
   assert.equal(select.value,'ICML');assert.equal(ui.filtersDirty,false);
   ui.$('venue-rank').value='B';ui.updateConferenceOptions();
-  assert.deepEqual(select.options.map(o=>o.value),['EMNLP','ECCV']);
+  assert.deepEqual(select.options.map(o=>o.value),['EMNLP','ECCV','IJCAI','ICRA']);
   assert.equal(ui.selectedConferences().join(','),'EMNLP');assert.equal(ui.filtersDirty,true);
   assert.equal(ui.active,paper);assert.equal(ui.candidates[0],paper);assert.equal(ui.selected.has(paper.id),true);
   ui.$('venue-type').value='期刊';ui.updateConferenceOptions();
@@ -733,7 +750,7 @@ test('conference filters retain compatible selection and results, and disable se
   ui.$('venue-type').value='期刊';ui.$('venue-rank').value='A';ui.$('venue-field').value='';ui.updateConferenceOptions();
   assert.deepEqual(select.options.map(o=>o.value),['JMLR','TPAMI','TKDE']);assert.equal(select.size,3);
   assert.equal(ui.selectedConferences().join(','),'JMLR');assert.equal(ui.$('fetch').disabled,false);
-  assert.match(ui.$('venue-summary').textContent,/26 个会议、3 本期刊/);
+  assert.match(ui.$('venue-summary').textContent,/30 个会议、3 本期刊/);
 });
 
 test('multi-conference and year-range selection forms the Cartesian target set with bounded validation',()=>{
@@ -756,6 +773,13 @@ test('support catalogue distinguishes verified years, publication-dependent rule
       assert.equal(core.sourceYearError(conference,2026),'');
       assert.match(core.sourceYearError(conference,2024),/支持年份：2025、2026/);
       assert.match(core.sourceYearError(conference,2027),/尚未适配/);
+    }else if (core.ROBOTICS_SOURCES[conference]) {
+      assert.deepEqual(support.years,conference==='ICRA'?[2026]:[2025]);
+      assert.match(support.scope,/期刊展示.*非纯录用名单/);
+      assert.equal(support.conditional,false);
+    }else if (['IJCAI','ACM MM'].includes(conference)) {
+      assert.deepEqual(support.years,conference==='IJCAI'?[2025,2026]:[2025]);
+      assert.equal(support.conditional,false);
     }else assert.equal(support.conditional,true);
   }
   for(const [conference,year] of [['AAAI',2009],['EMNLP',2006],['CVPR',2012],['ICCV',2026],['ECCV',2025],['ECCV',2016]])
@@ -780,7 +804,7 @@ test('unsupported conference-year combinations fail as a whole before requests o
   assert.equal(reads,0);
   const scope={Search4PaperCore:core};
   vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/sources.js'),'utf8'),scope);
-  for(const [conference,year] of [['SIGMOD',2027],['ICDE',2024],['ICCV',2026],['ECCV',2025]])
+  for(const [conference,year] of [['SIGMOD',2027],['ICDE',2024],['ICCV',2026],['ECCV',2025],['IJCAI',2024],['ACM MM',2026],['ICRA',2025],['IROS',2026]])
     await assert.rejects(scope.Search4PaperSources.fetchAccepted(year,{conference,request:()=>{reads++;}}),/尚未适配/);
   assert.equal(reads,0);
 });
@@ -791,7 +815,7 @@ test('support hints update on selection, show source limitations and re-enable v
   ui.updateSourceSupport();ui.controls();
   assert.equal(ui.supportError,'');assert.equal(ui.$('fetch').disabled,false);
   assert.match(ui.$('year-support').textContent,/官方初始录用名单/);
-  assert.match(ui.$('support-summary').textContent,/26 个会议/);
+  assert.match(ui.$('support-summary').textContent,/30 个会议/);
   assert.match(ui.$('support-rows').innerHTML,/class="selected-source"><td>SIGIR/);
   ui.$('year').value='2027';ui.updateSourceSupport();ui.controls();
   assert.match(ui.$('year-support').textContent,/SIGIR 2027.*2025、2026/);

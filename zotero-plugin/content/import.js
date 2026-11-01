@@ -58,7 +58,7 @@ var Search4PaperImport = {
             item.setField("date", String(paper.year));
             item.setField("url", paper.url);
             item.setField("DOI", paper.doi);
-            if (conference === "ICDE" || (Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) item.setField("conferenceName", conferenceName);
+            if (["ICDE", "IJCAI", "ACM MM", "IROS", "ICRA"].includes(conference) || (Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) item.setField("conferenceName", conferenceName);
             if (journal) {
               item.setField("publicationTitle", journal.title);
               item.setField("journalAbbreviation", conference);
@@ -66,7 +66,7 @@ var Search4PaperImport = {
               for (const field of ["date", "volume", "issue", "pages"]) if (paper[field]) item.setField(field, paper[field]);
             }
             else item.setField("proceedingsTitle", `${conferenceName} (${conference} ${paper.year})`);
-            if ((Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) {
+            if (["IJCAI", "ACM MM", "IROS", "ICRA"].includes(conference) || (Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) {
               if (paper.publicationTitle) item.setField("proceedingsTitle", paper.publicationTitle);
               if (paper.date) item.setField("date", paper.date);
               if (paper.pages) item.setField("pages", paper.pages);

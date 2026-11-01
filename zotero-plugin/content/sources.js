@@ -199,6 +199,142 @@ var Search4PaperSources = (() => {
     return papers;
   }
 
+  function parseRoboticsProgram(raw, conference, year, day) {
+    const config = Search4PaperCore.ROBOTICS_SOURCES[conference]?.[year];
+    if (!config || !config.days.includes(day)) throw new Error('尚未适配该机器人会议日程。');
+    const doc = html(raw), { code } = config;
+    if (text(doc.querySelector('title')) !== `${conference} ${year} Program | ${config.dates[day]}`) {
+      throw new Error(`${conference} 日程返回了其他会议或年份。`);
+    }
+    const sourceURL = `https://ras.papercept.net/conferences/conferences/${code}/program/`;
+    const pageURL = `${sourceURL}${code}_ContentListWeb_${day}.html`, papers = [];
+    for (const table of doc.querySelectorAll('table.trk')) {
+      const headers = [...table.querySelectorAll('tr.sHdr')].map(text).join(' ');
+      const track = ['Regular Session', 'Interactive Session', 'Award Session'].find(type => headers.includes(type));
+      if (!track) {
+        if (table.querySelector('.pTtl') && !/Late Breaking Results|Workshop|Tutorial|Keynote|Plenary|Video Session/.test(headers)) {
+          throw new Error(`${conference} 出现未适配的论文日程类型：${headers}`);
+        }
+        continue;
+      }
+      const session = text(table.querySelector('tr.sHdr a[name]'));
+      const sessionTitle = text(table.querySelector(`a[href^="${code}_ProgramAtAGlanceWeb.html#"]`));
+      if (!session || !sessionTitle) throw new Error(`${conference} 论文缺少日程分组。`);
+      const titles = table.querySelectorAll('.pTtl');
+      const blocks = table.querySelectorAll('tr.pHdr');
+      if (titles.length !== blocks.length) throw new Error(`${conference} 日程论文标题/编号不完整。`);
+      for (const header of blocks) {
+        const anchor = header.querySelector('a[name]')?.getAttribute('name');
+        const nodes = [];
+        for (let node = header.nextElementSibling; node && !node.matches('tr.pHdr'); node = node.nextElementSibling) nodes.push(node);
+        const titles = nodes.flatMap(node => [...node.querySelectorAll('.pTtl')]);
+        const title = titles[0], link = title?.querySelector('a');
+        const abstractID = link?.getAttribute('onclick')?.match(/^viewAbstract\('([1-9]\d*)'\); return false$/)?.[1];
+        const checkboxID = header.querySelector('input[name^=modify]')?.getAttribute('name')?.match(/^modify([1-9]\d*)$/)?.[1];
+        const id = abstractID || checkboxID;
+        if (titles.length !== 1 || !id || (abstractID && checkboxID && abstractID !== checkboxID)
+          || (link && !abstractID) || !/^[a-z0-9]+_\d+$/.test(anchor || '')) throw new Error(`${conference} 论文标题或日程标识异常。`);
+        const authors = nodes.flatMap(node => [...node.querySelectorAll(`a[href^="${code}_AuthorIndexWeb.html#"]`)]).map(text);
+        const abstractNode = nodes.flatMap(node => [...node.querySelectorAll(`div[id="Ab${id}"]`)]);
+        if (abstractNode.length > 1 || (abstractID && abstractNode.length !== 1)) throw new Error(`${conference} 论文摘要区缺失或与编号不一致。`);
+        const keywords = [...(abstractNode[0]?.querySelectorAll(`a[href^="${code}_KeywordIndexWeb.html#"]`) || [])].map(text).join('; ');
+        const label = [...(abstractNode[0]?.querySelectorAll('strong') || [])].find(node => text(node) === 'Abstract:');
+        const abstract = [];
+        if (label) for (let node = label.nextSibling; node; node = node.nextSibling) abstract.push(node.textContent);
+        papers.push(paper(conference, year, conference.toLowerCase(), {
+          id: `${year}:${id}`, title: text(title), authors, sourceURL, url: `${pageURL}#${anchor}`,
+          programDay: day, programAnchor: anchor, track, sessions: [`${session}: ${sessionTitle}`],
+          abstract: abstract.join('').replace(/\s+/g, ' ').trim(), keywords
+        }));
+      }
+    }
+    if (!papers.length) throw unavailable(conference, year);
+    return papers;
+  }
+
+  async function fetchRoboticsProgram(conference, year, { request, signal, onProgress }) {
+    const { code, days } = Search4PaperCore.ROBOTICS_SOURCES[conference][year], papers = new Map();
+    for (const day of days) {
+      signal?.throwIfAborted();
+      const raw = await request(`https://ras.papercept.net/conferences/conferences/${code}/program/${code}_ContentListWeb_${day}.html`, signal, 'text');
+      signal?.throwIfAborted();
+      for (const item of parseRoboticsProgram(raw, conference, year, day)) {
+        const prior = papers.get(item.id);
+        if (prior) {
+          if (prior.title !== item.title || JSON.stringify(prior.authors) !== JSON.stringify(item.authors)
+            || prior.abstract !== item.abstract || prior.keywords !== item.keywords) {
+            throw new Error(`${conference} 重复展示的同一论文内容不一致：${item.id}`);
+          }
+          prior.sessions = [...new Set([...prior.sessions, ...item.sessions])];
+        } else papers.set(item.id, item);
+      }
+      onProgress(papers.size, null, `读取 ${conference} 官方技术日程：${days.indexOf(day) + 1}/${days.length} 天…`);
+    }
+    return [...papers.values()];
+  }
+
+  function parseIJCAIIndex(raw, year) {
+    const doc = html(raw), sourceURL = `https://ijcai.org/proceedings/${year}/`;
+    const sections = [...doc.querySelectorAll('.archive-volume > .section')]
+      .filter(section => text(section.querySelector('h3')) === 'Main Track' && section.querySelector('.paper_wrapper'));
+    if (sections.length !== 1) throw new Error("IJCAI 官方论文集缺少唯一的 Main Track。");
+    return [...sections[0].querySelectorAll('.paper_wrapper')].map(row => {
+      const link = row.querySelector('a.title'), url = new URL(link?.getAttribute('href') || '', sourceURL);
+      const id = url.pathname.match(new RegExp(`^/proceedings/${year}/([1-9]\\d*)$`))?.[1];
+      const doi = row.querySelector('a[href^="https://doi.org/"]')?.getAttribute('href')?.slice(16);
+      const pdf = row.querySelector('a[href$=".pdf"]');
+      const pdfURL = pdf ? new URL(pdf.getAttribute('href'), sourceURL).href : '';
+      if (url.origin !== 'https://ijcai.org' || !id || doi !== `10.24963/ijcai.${year}/${id}`
+        || pdfURL !== `${sourceURL}${id.padStart(4, '0')}.pdf`) throw new Error("IJCAI 论文年份、DOI 或 PDF 不一致。");
+      return paper('IJCAI', year, 'ijcai', { id: `${year}:${id}`, title: text(link), url: url.href,
+        authors: [...row.querySelectorAll('.authors a')].map(text), doi, pdfURL, sourceURL, track: 'Main Track',
+        pages: text(row.querySelector('.details')).match(/^Pages\s+(\d+[–-]\d+)/)?.[1] || '' });
+    });
+  }
+
+  function completeIJCAIPaper(raw, item) {
+    const doc = html(raw), main = doc.querySelector('.article__main');
+    if (text(main?.querySelector('.article__title')) !== item.title
+      || main?.querySelector('.article__doi a')?.getAttribute('href') !== `https://doi.org/${item.doi}`
+      || JSON.stringify([...(main?.querySelectorAll('.article__authors a') || [])].map(text)) !== JSON.stringify(item.authors)
+      || !text(main?.querySelector('.article__venue')).includes('Main Track.')) {
+      throw new Error('IJCAI 详情与所选论文的标题、作者、DOI 或轨道不一致。');
+    }
+    const paragraphs = [...doc.querySelectorAll('.article__abstract p:not(.eyebrow)')];
+    return { ...item, abstract: paragraphs.map(text).join('\n'),
+      keywords: [...main.querySelectorAll('.article__keywords li')].map(text).join('; ') };
+  }
+
+  function parseACMMM(raw, year) {
+    const doc = html(raw), sourceURL = `https://acmmm${year}.org/accepted-regular-papers/`;
+    if (text(doc.querySelector('title')) !== `Accepted Regular Papers | ${year} ACM Multimedia`) {
+      throw new Error('ACM MM 返回了其他年份或轨道的页面。');
+    }
+    const heading = [...doc.querySelectorAll('.et_pb_text_inner > h1')].filter(node => text(node) === 'Accepted Papers');
+    if (heading.length !== 1) throw new Error('ACM MM 官方 Regular Papers 名单缺失或不唯一。');
+    const rows = [...heading[0].parentElement.querySelectorAll(':scope > p')].filter(node => text(node));
+    return rows.map(row => {
+      const title = row.querySelector('b'), br = row.querySelector('br');
+      const id = row.firstChild?.textContent.trim();
+      if (!/^[1-9]\d*$/.test(id || '') || !title || !br) throw new Error('ACM MM 论文编号、标题或作者行不完整。');
+      const authorNodes = []; for (let node = br.nextSibling; node; node = node.nextSibling) authorNodes.push(node.textContent);
+      const authors = authorNodes.join('').trim().split(/\s*,\s*/);
+      return paper('ACM MM', year, 'acmmm', { id: `${year}:${id}`, title: text(title), authors,
+        url: sourceURL, sourceURL, track: 'Regular Papers' });
+    });
+  }
+
+  async function fetchIJCAI(year, { request, signal, onProgress }) {
+    const papers = parseIJCAIIndex(await request(`https://ijcai.org/proceedings/${year}/`, signal, 'text'), year);
+    for (let index = 0; index < papers.length; index++) {
+      signal?.throwIfAborted();
+      papers[index] = completeIJCAIPaper(await request(papers[index].url, signal, 'text'), papers[index]);
+      signal?.throwIfAborted();
+      onProgress(index + 1, papers.length, '逐篇读取 IJCAI 官方摘要…');
+    }
+    return papers;
+  }
+
   function parseCVFIndex(raw, conference, year) {
     const doc = html(raw);
     const prefixes = [`/content/${conference}${year}/html/`, `/content_${conference.toLowerCase()}_${year}/html/`, `/content_${conference}_${year}/html/`];
@@ -469,6 +605,9 @@ var Search4PaperSources = (() => {
     else if (Search4PaperCore.SYSTEMS_SOURCES[conference]) papers = await Search4PaperSystemsSources.fetchAccepted(conference, year, settings);
     else if (Search4PaperCore.DATABASE_SOURCES[conference]) papers = await Search4PaperDatabaseSources.fetchAccepted(conference, year, settings);
     else if (conference === "ICDE") papers = await fetchICDE(year, settings);
+    else if (Search4PaperCore.ROBOTICS_SOURCES[conference]) papers = await fetchRoboticsProgram(conference, year, settings);
+    else if (conference === "IJCAI") papers = await fetchIJCAI(year, settings);
+    else if (conference === "ACM MM") papers = parseACMMM(await request(`https://acmmm${year}.org/accepted-regular-papers/`, signal, "text"), year);
     else if (conference === "ECCV") papers = await fetchECCV(year, settings);
     else if (conference === "AAAI") papers = await fetchAAAI(year, settings);
     else papers = await fetchCVF(conference, year, settings);
@@ -480,5 +619,5 @@ var Search4PaperSources = (() => {
     onProgress(papers.length, papers.length);
     return papers;
   }
-  return { fetchAccepted, parseICDE, parseAnthology, parseAAAIRecord, parseCVFIndex, parseECVAIndex, parseIACRIndex, completeIACRPaper };
+  return { fetchAccepted, parseRoboticsProgram, parseIJCAIIndex, completeIJCAIPaper, parseACMMM, parseICDE, parseAnthology, parseAAAIRecord, parseCVFIndex, parseECVAIndex, parseIACRIndex, completeIACRPaper };
 })();

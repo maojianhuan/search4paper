@@ -41,7 +41,7 @@ ACM 条目在前述开放路径失败后按 DOI 请求 ACM 官方 PDF；遇到 4
 
 ## 支持的来源和年份
 
-共 26 个会议、3 本期刊；分类使用仓库 CCF 2026 目录。下表列出明确核实的年份或按年份查询的适配规则；“某年起”不代表每年均已公开或逐年验证。仅已公开且结构受支持的年份可用；不可用或结构异常明确报错，不以 DBLP 替代录用名单。来源核对日期：2026-09-29。
+共 30 个会议、3 本期刊；分类使用仓库 CCF 2026 目录。下表列出明确核实的年份或按年份查询的适配规则；“某年起”不代表每年均已公开或逐年验证。仅已公开且结构受支持的年份可用；不可用或结构异常明确报错，不以 DBLP 替代录用名单。来源核对日期：2026-09-29；IJCAI / ACM MM / IROS / ICRA 于 2026-10-29 补充核对。
 
 本次仅接入已确认的 CCF A 期刊。此前建议的两批期刊并非全部为 A：JMLR、TPAMI 为人工智能 A 类，TKDE 为数据库/数据挖掘/内容检索 A 类；TNNLS 为 B 类，TMLR 未列入核对目录，均不纳入本次支持范围。依据：[CCF 人工智能目录](https://www.ccf.org.cn/Academic_Evaluation/AI/)、[CCF 数据库目录](https://www.ccf.org.cn/Academic_Evaluation/DM_CS/)，并与 [2026 第七版目录 PDF](https://scdm-shu.github.io/ccf/2026-CCF-Ranking.pdf) 交叉核对。
 
@@ -59,6 +59,10 @@ Crossref 可能尚未收录部分论文，`journal-article` 也可能包含社�
 | --- | --- | --- |
 | ICML / NeurIPS / ICLR | OpenReview API v2，`会议.cc/年份/Conference` 录用名单 | 所选年份须已公开 |
 | WWW / The Web Conference | OpenReview API v2，`ACM.org/TheWebConf/年份/Conference` 录用名单 | 所选年份须已公开 |
+| IROS | [PaperPlaza 官方技术日程](https://ras.papercept.net/conferences/conferences/IROS25/program/)，Regular Session 论文；含主会论文展示，可能含期刊展示 | 2025 |
+| ICRA | [PaperPlaza 官方技术日程](https://ras.papercept.net/conferences/conferences/ICRA26/program/)，Regular / Interactive / Award Session 论文 | 2026 |
+| IJCAI | [2025](https://ijcai.org/proceedings/2025/) / [2026](https://ijcai.org/proceedings/2026/) 官方论文集 Main Track 与详情摘要；排除专题、Survey、Journal、Demo 等轨道 | 2025、2026 |
+| ACM MM | [2025 官方 Regular Papers 录用名单](https://acmmm2025.org/accepted-regular-papers/)；缺失摘要、DOI、PDF 保持为空 | 2025；2026 尚未适配 |
 | AAAI | AAAI Proceedings，Technical Tracks | 2010 起 |
 | ACL | ACL Anthology，2020 起主会 long；更早为 Pyy 第 1 卷 | 2000 起 |
 | EMNLP | ACL Anthology，2020 起主会 main；更早为 Dyy 第 1 卷 | 2007 起 |
@@ -87,12 +91,16 @@ SIGCOMM shorts 按 [2025 CFP](https://conferences.sigcomm.org/sigcomm/2025/cfp/)
 
 KDD 2025 周期为 `KDD.org/2025/Research_Track_August`、`KDD.org/2025/Research_Track_February`；2026 直接解析官方页面的 `cycle1Papers` / `cycle2Papers` 数据，仅取 `rtp`，排除 ADS、Datasets / Benchmarks 等轨道，不执行网页脚本、不推测 OpenReview 周期名。VLDB 年份按 [2025 卷期归属](https://www.vldb.org/pvldb/vol18/FrontMatterVol18No12.pdf)和 [2026 卷期归属](https://www.vldb.org/pvldb/vol19/FrontMatterVol19No11.pdf)，不按出版日历年推断；均只纳入第 1–11 期研究论文，排除后续期号与 Front Matter。新来源均导入 `conferencePaper`，保留官方可得的作者、规范会议名、出版物名、DOI、页码、摘要与链接，不生成缺失元数据。
 
+IJCAI 按官方 Main Track 分组获取论文，逐篇核对标题、作者、DOI 和轨道并读取摘要、关键词；首次获取需请求各论文详情页。ACM MM 2025 仅提供录用名单，论文用“年份＋投稿编号”区分，共用名单页面 URL 不参与单篇去重。两者均支持本地缓存检索、组合筛选和导入；不支持的年份在联网前报错，不以其他年份或 DBLP 代替。
+
+IROS / ICRA 当前读取上述年份全部三个技术日程日，逐条保留作者、关键词、摘要和日程定位链接；按年份与投稿编号去重，重复展示内容不一致时报错。排除 Late Breaking Results、Workshop、Tutorial、Keynote、Plenary 等记录。来源是技术日程，可能包含期刊论文的会议展示，不等同于纯主会新录用论文集；导入来源笔记保留这一口径。未公开摘要、DOI 和 PDF 不生成。ICRA 2025 与 IROS 2026 的候选官方页面本次访问失败，未适配，也不以 DBLP 或其他年份替代。
+
 ## 开发和发布
 
 在仓库根目录运行：
 
 ```sh
-node --test tests/test_zotero_plugin.cjs tests/test_zotero_arxiv.cjs tests/test_zotero_abstract.cjs tests/test_zotero_discovery.cjs tests/test_zotero_publication.cjs tests/test_zotero_openreview.cjs tests/test_zotero_ieee.cjs tests/test_zotero_database.cjs tests/test_zotero_systems.cjs tests/test_zotero_acm.cjs tests/test_zotero_materials.cjs tests/test_zotero_journals.cjs
+node --test tests/test_zotero_plugin.cjs tests/test_zotero_arxiv.cjs tests/test_zotero_abstract.cjs tests/test_zotero_discovery.cjs tests/test_zotero_publication.cjs tests/test_zotero_openreview.cjs tests/test_zotero_ieee.cjs tests/test_zotero_database.cjs tests/test_zotero_systems.cjs tests/test_zotero_acm.cjs tests/test_zotero_materials.cjs tests/test_zotero_journals.cjs tests/test_zotero_ai.cjs
 python3 zotero-plugin/build.py
 ```
 
@@ -116,3 +124,7 @@ Git 跟踪源码、构建脚本和版本号；XPI 存放在 Release，不提交�
 
 
 联网 PDF 审计入口为 `tests/zotero_pdf_live_smoke.js`，不纳入普通单元测试。在安装当前 XPI 的全新 Zotero 测试 profile 中运行，保持个人文献库为空，不配置账号或登录；可仅复制由插件正常生成的 `search4paper/<会议>/<年份>.json` 缓存。通过 Run JavaScript 加载此脚本，调用 `runSearch4PaperPDFLiveSmoke({expectedDataDir: Zotero.DataDirectory.dir, reportPath: "测试结果 JSON 的绝对路径"})`。脚本清空测试 profile 的 Cookie 和 HTTP 缓存，按实际注册表逐会选择一篇论文，调用现有全文入口并检查附件 `%PDF-`，随后删除测试条目及附件；日志只保留会议、年份、论文、来源、HTTP 状态和结果。`only` 可用于针对失败会议复测；修复后应省略它完整重跑。每轮需重启 Zotero，禁止在真实个人 profile 中运行。
+
+2026-10-29 IJCAI / ACM MM 验证：新增 `tests/test_zotero_ai.cjs` 检查来源身份、缓存隔离、共用 URL 的多论文导入及重复导入保留用户修改。`tests/zotero_ai_fixtures.js` 接收 `tests/fixtures/zotero-ai/` 下按文件名映射的文本，可在加载 core.js / sources.js 的原生 DOMParser 环境中调用 `runSearch4PaperAIFixtures(files)` 执行；覆盖轨道排除、错误年份、详情身份、字段缺失、重复记录、取消和 HTTP 错误。本轮全部 135 项 Node 测试和 32 条 Chromium 原生 DOM 断言通过；在 Chromium 原生 DOM 中回放下载的官方完整目录，解析 IJCAI 2025 Main Track 1,014 篇、2026 Main Track 678 篇、ACM MM 2025 Regular Papers 1,250 篇；未逐篇联网获取全部 IJCAI 摘要，未执行真实 Zotero GUI 导入或 PDF 下载。
+
+2026-10-29 IROS / ICRA 验证：全部 135 项 Node 测试和 39 条 Chromium 原生 DOM 断言通过。`tests/zotero_robotics_fixtures.js` 在加载 core.js / sources.js 的原生 DOMParser 环境中调用 `runSearch4PaperRoboticsFixtures(files)`，其中 files 为 `tests/fixtures/zotero-robotics/` 下按文件名映射的文本。覆盖全部技术日、轨道排除、错误会议/年份/日期、缺标题、摘要编号不一致、无摘要的官方格式、重复展示、后续日期 HTTP 失败及取消。下载的官方完整日程在 Chromium 原生 DOM 中回放并通过缓存校验：IROS 2025 为 2,672 篇（均有摘要），ICRA 2026 为 2,820 篇（2,639 篇有摘要）；这些是核对当日技术日程范围的记录数，不代表纯录用论文数。未执行真实 Zotero GUI 导入或 PDF 下载。
