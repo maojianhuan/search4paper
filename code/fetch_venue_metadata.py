@@ -94,12 +94,18 @@ def dblp_rows(spec, year: int, raw_dir: Path):
     return rows, rich, sources, total
 
 
-def crossref_rows(spec, year: int, raw_dir: Path):
+def crossref_rows(spec, year: int, raw_dir: Path, *, print_publication: bool = False):
     # Crossref 'published' is its earliest publication date, not necessarily print year.
     cursor, rows, rich, sources, seen, total = "*", [], [], [], set(), None
+    date_filter = "print-pub-date" if print_publication else "pub-date"
+    date_field = "published-print" if print_publication else "published"
+    # Crossref dates the digitized AAAI 2012 proceedings to their 2021 release.
+    source_year = 2021 if spec.key == "AAAI" and year == 2012 else year
     while True:
-        params = dict(filter=f"from-pub-date:{year}-01-01,until-pub-date:{year}-12-31,type:journal-article",
-                      rows=1000, cursor=cursor)
+        params = dict(filter=f"from-{date_filter}:{source_year}-01-01,until-{date_filter}:{source_year}-12-31,type:journal-article",
+                      rows=200, cursor=cursor)
+        if print_publication:
+            params["select"] = "DOI,ISSN,title,author,abstract,volume,issue,page,published-print,is-referenced-by-count"
         url = f"https://api.crossref.org/journals/{spec.issns[0]}/works?" + urlencode(params)
         message = fetch_json(url, raw_dir, len(sources))["message"]
         sources.append(url)
@@ -119,13 +125,28 @@ def crossref_rows(spec, year: int, raw_dir: Path):
             seen.add(doi)
             if not set(spec.issns).intersection(info.get("ISSN", [])):
                 raise RuntimeError("Crossref returned a different journal ISSN")
-            if info.get("type") != "journal-article" or int(info["published"]["date-parts"][0][0]) != year:
+            if ((not print_publication and info.get("type") != "journal-article")
+                    or int(info[date_field]["date-parts"][0][0]) != source_year):
                 raise RuntimeError("Crossref returned a different publication type/year")
+            if spec.key == "AAAI" and 2010 <= year <= 2024:
+                volume = str(info.get("volume", ""))
+                if not volume.isdecimal() or not doi.startswith(f"10.1609/aaai.v{volume}i"):
+                    raise RuntimeError("Crossref returned inconsistent AAAI proceedings volume metadata")
+                if volume != str(year - 1986):
+                    continue
+                if 2010 <= year <= 2017 and str(info.get("issue")) != "1":
+                    # The AAAI conference proceedings for these years are in issue 1.
+                    continue
             authors = [" ".join(filter(None, [a.get("given"), a.get("family")])) or a.get("name", "") for a in info.get("author", [])]
             row = base_row(spec, year, info["title"][0], authors, doi, doi, f"https://doi.org/{doi}")
             row.update(abstract=text(info.get("abstract", "")), volume=info.get("volume", ""),
                        issue=info.get("issue", ""), pages=info.get("page", ""),
-                       booktitle="; ".join(info.get("container-title", [])))
+                       booktitle="; ".join(info.get("container-title", [])),
+                       crossref_cited_by_count=info.get("is-referenced-by-count", ""))
+            if spec.key == "AAAI":
+                publisher_url = (info.get("resource") or {}).get("primary", {}).get("URL", "")
+                if re.fullmatch(r"https://ojs\.aaai\.org/index\.php/AAAI/article/view/\d+(?:-\d+)?", publisher_url):
+                    row["publisher_paper_url"] = publisher_url
             rows.append(row)
             rich.append({"normalized": row, "source_record": info})
         if len(seen) == total:
@@ -139,8 +160,12 @@ def crossref_rows(spec, year: int, raw_dir: Path):
 
 def build_outputs(output_root: Path, *, spec, year: int):
     directory = output_root / str(year) / spec.key
-    fetch = crossref_rows if spec.source_kind == "crossref_journal" else dblp_rows
-    rows, rich, sources, total = fetch(spec, year, directory / "raw")
+    if spec.source_kind in {"crossref_journal", "crossref_journal_print"}:
+        rows, rich, sources, total = crossref_rows(
+            spec, year, directory / "raw", print_publication=spec.source_kind == "crossref_journal_print",
+        )
+    else:
+        rows, rich, sources, total = dblp_rows(spec, year, directory / "raw")
     if not rows:
         raise RuntimeError(f"{spec.key} {year}：未发现已索引论文；不能据此认定该年没有论文。")
     stem = f"{spec.key}_{year}_accepted_papers"  # Existing local-search file contract.
@@ -148,7 +173,12 @@ def build_outputs(output_root: Path, *, spec, year: int):
     warnings = ["已出版书目，不是实时录用名单；元数据索引可能延迟或遗漏。",
                 "有书目不代表有摘要或可下载全文；检索不需要订阅账号。",
                 "书目条目的正式长文资格未经逐篇核验，不可直接作为 CCF 成果认定依据。"]
-    year_policy = "Crossref published 最早发表日期（含在线发表），不一定是纸刊年份" if spec.source_kind == "crossref_journal" else "DBLP 记录的出版年份，不一定是会议举办年份"
+    year_policy = {
+        "crossref_journal": "Crossref published 最早发表日期（含在线发表），不一定是纸刊年份",
+        "crossref_journal_print": "Crossref published-print 纸刊出版年份",
+    }.get(spec.source_kind, "DBLP 记录的出版年份，不一定是会议举办年份")
+    if spec.key == "AAAI" and year == 2012:
+        year_policy = "按 AAAI 2012 年第 26 卷第 1 期收录，Crossref 数字版出版日期为 2021 年"
     warnings.append(year_policy)
     if spec.mapping_note:
         warnings.append(spec.mapping_note)

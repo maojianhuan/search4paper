@@ -1,0 +1,426 @@
+{
+  "targets": [
+    {
+      "conference": "CVPR",
+      "year": 2025
+    },
+    {
+      "conference": "ICCV",
+      "year": 2025
+    },
+    {
+      "conference": "ECCV",
+      "year": 2024
+    },
+    {
+      "conference": "ICRA",
+      "year": 2025
+    },
+    {
+      "conference": "IROS",
+      "year": 2025
+    },
+    {
+      "conference": "CoRL",
+      "year": 2025
+    },
+    {
+      "conference": "NeurIPS",
+      "year": 2025
+    },
+    {
+      "conference": "ICLR",
+      "year": 2025
+    },
+    {
+      "conference": "ICML",
+      "year": 2025
+    },
+    {
+      "conference": "AAAI",
+      "year": 2025
+    },
+    {
+      "conference": "IJCAI",
+      "year": 2025
+    },
+    {
+      "conference": "T-RO",
+      "year": 2025
+    },
+    {
+      "conference": "IJRR",
+      "year": 2025
+    },
+    {
+      "conference": "RA-L",
+      "year": 2025
+    },
+    {
+      "conference": "TPAMI",
+      "year": 2025
+    },
+    {
+      "conference": "IJCV",
+      "year": 2025
+    }
+  ],
+  "include_neurips_tracks": true,
+  "search_fields": [
+    "title",
+    "abstract",
+    "keywords",
+    "tldr"
+  ],
+  "context_anchors": [
+    "embodied",
+    "navigation",
+    "robot",
+    "robotic",
+    "vision language",
+    "multimodal",
+    "3D scene",
+    "spatial intelligence"
+  ],
+  "query_groups": {
+    "vision_language_navigation": {
+      "direct": true,
+      "terms": [
+        "vision language navigation",
+        "vision and language navigation",
+        "visual language navigation",
+        "visual and language navigation",
+        "VLN",
+        "VLN-CE",
+        "language guided navigation",
+        "language conditioned navigation",
+        "language instructed navigation",
+        "navigation instructions",
+        "language instruction navigation",
+        "natural language navigation",
+        "instruction following navigation",
+        "room to room navigation",
+        "room across room",
+        "dialog navigation",
+        "dialogue navigation",
+        "remote embodied visual referring expression",
+        "remote embodied referring expression",
+        "remote embodied visual grounding",
+        "navigation with language based assistance",
+        "object goal navigation",
+        "image goal navigation",
+        "instance goal navigation",
+        "open vocabulary navigation",
+        "embodied navigation"
+      ]
+    },
+    "spatial_intelligence": {
+      "direct": true,
+      "exact_terms": [
+        "EmbodiedQA"
+      ],
+      "terms": [
+        "spatial intelligence",
+        "spatial reasoning",
+        "spatial understanding",
+        "spatial cognition",
+        "spatial awareness",
+        "embodied spatial reasoning",
+        "spatial question answering",
+        "embodied question answering",
+        "EmbodiedQA",
+        "situated question answering",
+        "3D visual grounding",
+        "3D scene understanding",
+        "3D scene graph",
+        "3D question answering",
+        "3D geometric reasoning",
+        "visual room rearrangement"
+      ]
+    },
+    "spatial_navigation": {
+      "direct": true,
+      "terms": [
+        "visual navigation",
+        "vision based navigation",
+        "indoor navigation",
+        "image based navigation"
+      ],
+      "exact_terms": [
+        "visual navigation",
+        "vision based navigation",
+        "indoor navigation",
+        "image based navigation"
+      ]
+    },
+    "spatial_geometry": {
+      "direct": true,
+      "terms": [
+        "ground plane localization",
+        "scene graph generation",
+        "generating scene graph",
+        "audio spatialization",
+        "3D scene animation",
+        "compositional 3D-aware image synthesis",
+        "monocular depth estimation",
+        "depth completion",
+        "monocular scene flow",
+        "multi-view stereo",
+        "visual odometry",
+        "visual inertial odometry",
+        "LiDAR odometry",
+        "visual localization",
+        "LiDAR localization",
+        "image geo-localization",
+        "image geolocalization",
+        "camera pose estimation",
+        "multi-vehicle localization",
+        "visual SLAM",
+        "place recognition"
+      ]
+    },
+    "spatial_navigation_methods": {
+      "exact_terms": [
+        "spatial relation",
+        "spatial relations",
+        "spatial relationship",
+        "spatial relationships"
+      ],
+      "terms": [
+        "spatial grounding",
+        "spatial perception",
+        "spatial language",
+        "language vision and action",
+        "semantic mapping",
+        "topological mapping",
+        "semantic map",
+        "cognitive map",
+        "metric map",
+        "scene graph",
+        "spatial memory",
+        "scene memory",
+        "spatial relation",
+        "spatial relations",
+        "spatial relationship",
+        "spatial relationships",
+        "language grounding",
+        "landmark grounding",
+        "waypoint prediction"
+      ]
+    }
+  },
+  "institution_labels": {
+    "KAIST": [
+      "Korea Advanced Institute of Science and Technology"
+    ],
+    "Google DeepMind": [
+      "DeepMind"
+    ],
+    "Google Research": [],
+    "Google": [
+      "Google LLC",
+      "Google Brain"
+    ],
+    "Meta AI": [
+      "Facebook AI Research",
+      "Meta Fundamental AI Research",
+      "Meta FAIR",
+      "FAIR, Meta"
+    ],
+    "Meta Platforms": [
+      "Meta Platforms Inc",
+      "Meta Platforms Technologies"
+    ],
+    "NVIDIA": [],
+    "Intel Labs": [],
+    "OPPO US Research Center": [],
+    "Microsoft": [],
+    "Microsoft Research": [],
+    "Apple Inc": [
+      "Apple",
+      "Apple ML Research"
+    ],
+    "Toyota Research Institute": [],
+    "Toyota Technological Institute at Chicago": [],
+    "Amazon": [
+      "Alexa AI"
+    ],
+    "Samsung": [],
+    "Huawei": [],
+    "Tencent": [],
+    "Alibaba": [
+      "Fantasy AIGC Team"
+    ],
+    "Baidu": [],
+    "ByteDance": [],
+    "Meituan": [],
+    "Honda Research Institute": [],
+    "Salesforce Research": [],
+    "Adobe Research": [],
+    "Bosch Corporate Research": [
+      "Bosch Research",
+      "Corporate Research, Robert Bosch GmbH",
+      "Robert Bosch GmbH, Corporate Research"
+    ],
+    "Bosch": ["Robert Bosch"],
+    "Intel": [],
+    "Siemens": [],
+    "LG Electronics": [],
+    "Sony AI": [],
+    "Sony Corporation": [],
+    "Sony Semiconductor Solutions": [],
+    "Toyota Central R&D Labs": [],
+    "Woven by Toyota": [],
+    "Honda R&D": [],
+    "KUKA": [],
+    "Horizon Robotics": [],
+    "NAVER": [
+      "NAVER LABS",
+      "Clova NAVER"
+    ],
+    "CSIRO Data61": [
+      "Data61, CSIRO"
+    ],
+    "Shanghai Artificial Intelligence Laboratory": [
+      "Shanghai AI Laboratory",
+      "Shanghai AI Lab"
+    ],
+    "Shenyang Institute of Automation, Chinese Academy of Sciences": [],
+    "Peng Cheng Laboratory": [
+      "Pengcheng Laboratory"
+    ],
+    "CAS Institute of Automation": [
+      "CASIA",
+      "Institute of Automation of Chinese Academy of Sciences",
+      "Institute of Automation, Chinese Academy of Sciences",
+      "State Key Laboratory of Multimodal Artificial Intelligence Systems"
+    ],
+    "LG AI Research": [],
+    "SenseTime Research": [],
+    "DiDi Voyager Research": [
+      "Voyager Research, Didi Chuxing"
+    ],
+    "Institute of Computing Technology, Chinese Academy of Sciences": [],
+    "Seoul National University Advanced Robotics and Systems Institute": [
+      "ASRI, Seoul National University"
+    ],
+    "Allen Institute for AI": [
+      "Allen Institute for Artificial Intelligence",
+      "Ai2"
+    ],
+    "MIT CSAIL": [
+      "Computer Science and Artificial Intelligence Laboratory"
+    ],
+    "MIT Artificial Intelligence Laboratory": [
+      "MIT AI Lab",
+      "MIT Artificial Intelligence Lab",
+      "Artificial Intelligence Laboratory, Massachusetts Institute of Technology"
+    ],
+    "SRI International": [
+      "Stanford Research Institute"
+    ],
+    "Jet Propulsion Laboratory": [],
+    "MIT Media Laboratory": [
+      "MIT Media Lab"
+    ],
+    "Sony Computer Science Laboratories": [
+      "Sony CSL"
+    ],
+    "Stanford Center for the Study of Language and Information": [
+      "Center for the Study of Language and Information Stanford University",
+      "CSLI Stanford University"
+    ],
+    "USC Information Sciences Institute": [
+      "Information Sciences Institute University of Southern California",
+      "Information Sciences Institute and University of Southern California"
+    ],
+    "IBM Research": [
+      "IBM Research Laboratory",
+      "IBM Thomas J. Watson Research Center",
+      "IBM T. J. Watson Research Center"
+    ],
+    "Xerox PARC": [
+      "Xerox Palo Alto Research Center"
+    ],
+    "Bell Laboratories": [
+      "Bell Labs"
+    ],
+    "Hitachi": [],
+    "Inria": [],
+    "Dyson Robotics Lab": [
+      "Dyson Robotics Laboratory"
+    ],
+    "Berkeley Artificial Intelligence Research": [
+      "Berkeley AI Research"
+    ],
+    "Stanford AI Lab": [
+      "Stanford Artificial Intelligence Laboratory"
+    ],
+    "Carnegie Mellon Robotics Institute": [
+      "Robotics Institute Carnegie Mellon University"
+    ],
+    "Georgia Tech Mobile Robot Laboratory": [
+      "Mobile Robot Laboratory Georgia Tech",
+      "Mobile Robot Laboratory Georgia Institute of Technology"
+    ],
+    "ETH Zurich Autonomous Systems Lab": [
+      "ASL ETH Zurich",
+      "Autonomous Systems Lab ETH Zurich"
+    ],
+    "ETH Zurich Computer Vision Laboratory": [
+      "Computer Vision Laboratory, ETH Zurich",
+      "Computer Vision Lab, ETH Zurich"
+    ],
+    "TU Delft Cognitive Robotics": [
+      "Cognitive Robotics TU Delft",
+      "Cognitive Robotics, Delft University of Technology"
+    ],
+    "Istituto Italiano di Tecnologia": [
+      "Italian Institute of Technology"
+    ],
+    "Carnegie Mellon University": [
+      "Carnegie-Mellon University"
+    ],
+    "ETH Zurich": [
+      "ETH Zürich"
+    ],
+    "Imperial College London": [],
+    "Max Planck Institute for Informatics": [
+      "MPI for Informatics"
+    ],
+    "Imperial Personal Robotics Laboratory": [
+      "Personal Robotics Laboratory, Imperial College London"
+    ],
+    "ETH Zurich AIT Lab": [
+      "AIT Lab, ETH Zurich",
+      "AIT Lab, Department of Computer Science, ETH Zurich"
+    ],
+    "UCLA Vision Lab": [],
+    "Tencent YouTu Lab": [
+      "Tencent Youtu Laboratory"
+    ],
+    "IHMC Robotics": [
+      "Institute for Human and Machine Cognition"
+    ],
+    "Australian Centre for Robotics": [
+      "Australian Centre For Field Robotics"
+    ],
+    "Massachusetts Institute of Technology": [],
+    "Technical University of Munich": [
+      "Technische Universität München"
+    ],
+    "University of Oxford": [
+      "Oxford University"
+    ],
+    "Bristol Robotics Laboratory": [],
+    "University of Pennsylvania GRASP Lab": [
+      "GRASP Lab, University of Pennsylvania",
+      "GRASP Laboratory, University of Pennsylvania",
+      "University of Pennsylvania, GRASP Laboratory"
+    ],
+    "University of Michigan Robotics Institute": [
+      "Robotics Institute, University of Michigan"
+    ],
+    "Oxford Robotics Institute": []
+  }
+}

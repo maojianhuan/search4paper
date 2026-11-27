@@ -111,16 +111,6 @@ def tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", ascii_like)
 
 
-def common_prefix_length(left: str, right: str) -> int:
-    """Return the number of leading characters shared by two normalized words."""
-    length = 0
-    for left_character, right_character in zip(left, right):
-        if left_character != right_character:
-            break
-        length += 1
-    return length
-
-
 def token_matches(query_token: str, title_token: str) -> bool:
     """Match exact words, prefixes, and simple inflectional variants.
 
@@ -129,16 +119,9 @@ def token_matches(query_token: str, title_token: str) -> bool:
     characters are shared.  Very short tokens remain exact/prefix-only to avoid
     broad accidental matches.
     """
-    if title_token.startswith(query_token):
-        return True
-    # Do not let a short title word such as "for" satisfy "forecasting".
-    if len(title_token) >= 5 and query_token.startswith(title_token):
-        return True
-    minimum_shared_prefix = min(5, len(query_token), len(title_token))
-    return (
-        minimum_shared_prefix >= 5
-        and common_prefix_length(query_token, title_token) >= minimum_shared_prefix
-    )
+    if len(query_token) < 5:
+        return title_token.startswith(query_token)
+    return query_token[:5] == title_token[:5]
 
 
 class QuerySyntaxError(ValueError):

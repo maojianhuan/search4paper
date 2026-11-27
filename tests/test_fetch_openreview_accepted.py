@@ -9,6 +9,7 @@ conference/year pairs in ``DEFAULT_TARGETS``.  Run the unit tests separately:
 import json
 import tempfile
 import unittest
+from http.client import IncompleteRead
 from pathlib import Path
 from unittest.mock import patch
 
@@ -164,6 +165,12 @@ class ConferenceConfigurationTests(unittest.TestCase):
 
 
 class FetchTests(unittest.TestCase):
+    def test_interrupted_http_body_fails_as_a_transport_error(self):
+        url = "https://api.crossref.org/works"
+        with patch.object(crawler, "urlopen", side_effect=IncompleteRead(b"partial")):
+            with self.assertRaisesRegex(RuntimeError, "Failed to fetch.*IncompleteRead"):
+                crawler.request_bytes(url, timeout=2, retries=1)
+
     def test_exact_pagination_and_normalization(self):
         venue_id = "ICML.cc/2026/Conference"
         notes = [
@@ -288,12 +295,14 @@ class FetchTests(unittest.TestCase):
     def test_cvpr_uses_official_cvf_open_access_before_dblp(self):
         spec = crawler.CONFERENCE_SPECS["CVPR"]
         index_html = b'<a href="/CVPR2026?day=2026-06-05">Day 1</a>'
-        day_html = b"""@InProceedings{Example_2026_CVPR,
-          author = {Example, Alice and Example, Bob},
-          title = {Official CVF Paper},
-          booktitle = {Proceedings of CVPR},
-          year = {2026}
+        day_html = b"""<dt class="ptitle"><a href="/content/CVPR2026/html/Example_paper.html">Official CVF Paper</a></dt>
+        @InProceedings{Example_2026_CVPR,<br>
+          author = {Example, Alice and Example, Bob},<br>
+          title = {Official CVF Paper},<br>
+          booktitle = {Proceedings of CVPR},<br>
+          year = {2026}<br>
         }
+        <dt class="ptitle"><a href="/content/CVPR2026/html/Another_paperOriginal.html">Another Official CVF Paper</a></dt>
         @InProceedings{Example_2026_CVPR,
           author = {Example, Carol},
           title = {Another Official CVF Paper},
@@ -323,6 +332,139 @@ class FetchTests(unittest.TestCase):
             {"Official CVF Paper", "Another Official CVF Paper"},
         )
         self.assertTrue(all(row["source_type"] == "official_cvf_openaccess" for row in rows))
+        self.assertTrue(all(row["paper_url"].startswith("https://openaccess.thecvf.com/content/CVPR2026/") for row in rows))
+
+    def test_eccv_selects_only_requested_official_main_proceedings(self):
+        raw = b"""<button>ECCV 2024 Papers</button><dl>
+        <dt class="ptitle"><br><a href=papers/eccv_2024/papers_ECCV/html/1_paper.php>Main paper</a></dt>
+        <dd>Alice Example*, Bob Example</dd>
+        <dd><a href='papers/eccv_2024/papers_ECCV/papers/1.pdf'>pdf</a>
+        <a href="https://link.springer.com/chapter/10.1007/example_1">DOI</a></dd></dl>
+        <button>ECCV 2022 Papers</button><dl><dt class="ptitle">Other year</dt></dl>"""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", return_value=(raw, {"url": "https://www.ecva.net/papers.php"})):
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["ECCV"], year=2024,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertEqual(manifest["collection_scope"], "main_proceedings")
+        self.assertEqual(manifest["source_kind"], "official_ecva")
+        self.assertEqual([(row["title"], row["authors"], row["doi"]) for row in rows],
+                         [("Main paper", "Alice Example; Bob Example", "10.1007/example_1")])
+
+    def test_historical_icml_uses_main_pmlr_volume(self):
+        index = (b'<li><a href="v184"><b>Volume 184</b></a> Proceedings of ICML 2022 Workshop</li>'
+                 b'<li><a href="v162"><b>Volume 162</b></a> Proceedings of ICML 2022</li>')
+        paper = b"""@InProceedings{example, title={Spatial Reasoning}, author={Example, Alice},
+        year={2022}, volume={162}, abstract={Spatial reasoning in three dimensions.}}"""
+        bibliography = b"@Proceedings{ICML2022, title={Proceedings of ICML}}\n" + paper + b"\n" + paper
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", side_effect=[(index, {}), (bibliography, {})]) as request:
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["ICML"], year=2022,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertEqual(manifest["source_kind"], "official_pmlr")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(request.call_args.args[0], "https://proceedings.mlr.press/v162/assets/bib/bibliography.bib")
+        self.assertEqual(rows[0]["abstract"], "Spatial reasoning in three dimensions.")
+
+    def test_historical_neurips_keeps_official_tracks_and_reports_missing_authors(self):
+        page = b"""<h1 class="book-title">Advances in Neural Information Processing Systems 35</h1>
+        <p class="book-meta">NeurIPS 2022</p><span class="paper-count">1 paper</span>
+        <div><a title="paper title" href="/paper_files/paper/2022/hash/0123456789abcdef0123456789abcdef-Abstract-Datasets_and_Benchmarks.html">Benchmark</a>
+        <span class="paper-authors"></span></div><span class="paper-track-badge">Datasets and Benchmarks Track</span>"""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", return_value=(page, {})):
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["NIPS"], year=2022,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertEqual(manifest["source_kind"], "official_neurips")
+        self.assertEqual(manifest["missing_field_counts"]["authors"], 1)
+        self.assertEqual(rows[0]["track"], "Datasets and Benchmarks Track")
+
+    def test_ijcai_official_proceedings_validates_identifiers_and_retains_track(self):
+        page = b"""<p class="volume-head__meta">1 paper</p>
+        <div class="section_title"><h3>AI and Social Good</h3></div>
+        <div class="paper_wrapper paper-row" id="paper7">
+        <a class="title" href="/proceedings/2025/7">Spatial Navigation</a>
+        <div class="authors"><a href="/authors/example/">Alice Example</a></div>
+        <a href="https://doi.org/10.24963/ijcai.2025/7">DOI</a>
+        <a href="/proceedings/2025/0007.pdf">PDF</a></div>"""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", return_value=(page, {})):
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["IJCAI"], year=2025,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+            with patch.object(crawler, "request_bytes", return_value=(page.replace(b"ijcai.2025/7", b"ijcai.2025/8"), {})):
+                with self.assertRaisesRegex(RuntimeError, "Conflicting IJCAI"):
+                    crawler.fetch_ijcai_proceedings(Path(directory), spec=crawler.CONFERENCE_SPECS["IJCAI"], year=2025)
+            without_doi = page.replace(b'<a href="https://doi.org/10.24963/ijcai.2025/7">DOI</a>', b"")
+            with patch.object(crawler, "request_bytes", return_value=(without_doi, {})):
+                missing_doi_rows, _, _ = crawler.fetch_ijcai_proceedings(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["IJCAI"], year=2025,
+                )
+        self.assertEqual(manifest["source_kind"], "official_ijcai")
+        self.assertEqual(rows[0]["track"], "AI and Social Good")
+        self.assertEqual(rows[0]["doi"], "10.24963/ijcai.2025/7")
+        self.assertEqual(missing_doi_rows[0]["doi"], "")
+
+    def test_aaai_2021_excludes_legacy_volumes_republished_in_2021(self):
+        records = [
+            {
+                "DOI": f"10.1609/aaai.v{volume}i1.{record_id}",
+                "ISSN": ["2374-3468"],
+                "type": "journal-article",
+                "published": {"date-parts": [[2021]]},
+                "volume": str(volume),
+                "issue": "1",
+                "title": [title],
+            }
+            for volume, record_id, title in (
+                (26, 8391, "Legacy paper"),
+                (35, 16187, "AAAI 2021 paper"),
+            )
+        ]
+        payload = json.dumps({"message": {"total-results": 2, "items": records}}).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", return_value=(payload, {})):
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["AAAI"], year=2021,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertEqual(manifest["source_kind"], "crossref_journal")
+        self.assertEqual(manifest["counts"]["excluded_record_count"], 1)
+        self.assertEqual([row["doi"] for row in rows], ["10.1609/aaai.v35i1.16187"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", return_value=(payload, {})) as request:
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["AAAI"], year=2012,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertIn("from-pub-date%3A2021-01-01", request.call_args.args[0])
+        self.assertEqual(manifest["year"], 2012)
+        self.assertEqual([(row["year"], row["doi"]) for row in rows], [(2012, "10.1609/aaai.v26i1.8391")])
+
+    def test_icra_official_program_reads_three_technical_days(self):
+        fixtures = Path(__file__).parent / "fixtures" / "zotero-robotics"
+        days = [3, 4, 5]
+        responses = [
+            ((fixtures / f"icra-2026-day{day}.html").read_bytes(), {}) for day in days
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(crawler, "request_bytes", side_effect=responses) as request:
+                manifest, rows, _ = crawler.build_conference_outputs(
+                    Path(directory), spec=crawler.CONFERENCE_SPECS["ICRA"], year=2026,
+                    page_size=1000, use_iclr_virtual=False, refresh=False, include_rows=True,
+                )
+        self.assertEqual([call.args[0].rsplit("/", 1)[-1] for call in request.call_args_list],
+                         [f"ICRA26_ContentListWeb_{day}.html" for day in days])
+        self.assertEqual(manifest["collection_scope"], "technical_program")
+        self.assertEqual(len(rows), 8)
+        self.assertEqual(sum(bool(row["abstract"]) for row in rows), 7)
 
 
 class BatchRunnerTests(unittest.TestCase):

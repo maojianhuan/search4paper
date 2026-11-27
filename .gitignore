@@ -45,7 +45,8 @@ workbook_build/
 artifacts/
 
 # Personal research query configurations
-/configs/
+/configs/*
+!/configs/spatial_intelligence_vln.json
 
 # Validation and smoke outputs
 ccf_a_validation*/

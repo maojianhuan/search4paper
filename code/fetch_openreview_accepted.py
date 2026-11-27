@@ -42,6 +42,7 @@ import sys
 import time
 import threading
 from contextlib import contextmanager
+from http.client import IncompleteRead
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 import xml.etree.ElementTree as ET
@@ -138,9 +139,10 @@ class ConferenceSpec:
     issns: tuple[str, ...] = ()
     venue_filter: str = ""
     mapping_note: str = ""
+    venue_suffix: str = "Conference"
 
     def venue_id(self, year: int) -> str:
-        return f"{self.venue_prefix}/{year}/Conference"
+        return f"{self.venue_prefix}/{year}/{self.venue_suffix}"
 
     def group_url(self, year: int) -> str:
         return f"https://openreview.net/group?id={self.venue_id(year)}"
@@ -566,6 +568,24 @@ for _entry in CCF_CATALOG["venues"]:
     if _alias and sum(e["abbreviation"].strip().upper() == _alias for e in CCF_CATALOG["venues"]) == 1:
         CONFERENCE_ALIASES.setdefault(_alias, _entry["key"])
 
+# Supplemental venues have no CCF classification in this catalogue.
+CONFERENCE_SPECS["CORL"] = ConferenceSpec(
+    key="CORL", display_name="Conference on Robot Learning", source_kind="official_pmlr",
+    ccf_type="会议",
+)
+CONFERENCE_ALIASES["CORL"] = "CORL"
+for _key, _name, _issns in (
+    ("IJRR", "The International Journal of Robotics Research", ("0278-3649", "1741-3176")),
+    ("RA-L", "IEEE Robotics and Automation Letters", ("2377-3766",)),
+):
+    CONFERENCE_SPECS[_key] = ConferenceSpec(
+        key=_key, display_name=_name, source_kind="crossref_journal",
+        issns=_issns, ccf_type="期刊",
+    )
+    CONFERENCE_ALIASES[_key] = _key
+CONFERENCE_ALIASES.update({"T-RO": "J_TR_ROBOTICS", "TRO": "J_TR_ROBOTICS",
+                           "RA-I": "RA-L", "RAL": "RA-L"})
+
 # Reference counts are diagnostic only. They never determine membership.
 REFERENCE_COUNTS: dict[tuple[str, int], dict[str, int]] = {
     ("ICLR", 2026): {
@@ -585,11 +605,13 @@ CSV_FIELDS = [
     "ccf_type",
     "ccf_professional_field",
     "year",
+    "publication_year",
     "source_type",
     "source_id",
     "source_record_id",
     "source_url",
     "doi",
+    "crossref_cited_by_count",
     "paper_url",
     "booktitle",
     "volume",
@@ -773,7 +795,7 @@ def request_bytes(
         # It is an ``OSError`` rather than a ``URLError`` on CPython, so treat
         # it as a retryable transport failure instead of aborting a whole
         # multi-conference validation run.
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, IncompleteRead) as exc:
             last_error = exc
         if attempt + 1 < retries:
             time.sleep(2**attempt)
@@ -1544,17 +1566,41 @@ def fetch_cvf_openaccess(
                 url=page_url,
             )
             sources.append(source)
-        for entry in parse_bibtex_entries(raw):
-            normalized = normalize_bibtex_record(
-                entry,
-                spec=spec,
-                year=year,
-                source_type="official_cvf_openaccess",
-                source_id=source_id,
-                collection_url=page_url,
-            )
-            if normalized is not None:
+        paper_blocks = re.split(rb'<dt class="ptitle">', raw)[1:]
+        for block in paper_blocks or [raw]:
+            entries = parse_bibtex_entries(re.sub(rb"<br\s*/?>", b"\n", block, flags=re.I))
+            if paper_blocks and len(entries) != 1:
+                raise RuntimeError(f"CVF paper is missing its BibTeX record: {page_url}")
+            for entry in entries:
+                if paper_blocks and not entry.get("url"):
+                    link = re.search(rb'<a\s+href="([^"]+_paper(?:Original)?\.html)"', block.split(b"</dt>", 1)[0])
+                    if not link:
+                        raise RuntimeError(f"CVF paper is missing its detail link: {page_url}")
+                    paper_url = urljoin(page_url, link[1].decode("utf-8"))
+                    parsed = urlparse(paper_url)
+                    prefixes = (f"/content/{conference_code}/html/",
+                                f"/content_{spec.key.lower()}_{year}/html/",
+                                f"/content_{spec.key}_{year}/html/")
+                    if parsed.scheme != "https" or parsed.netloc != "openaccess.thecvf.com" or not parsed.path.startswith(prefixes):
+                        raise RuntimeError(f"Unexpected CVF paper link: {paper_url}")
+                    entry["url"] = paper_url
+                normalized = normalize_bibtex_record(
+                    entry,
+                    spec=spec,
+                    year=year,
+                    source_type="official_cvf_openaccess",
+                    source_id=source_id,
+                    collection_url=page_url,
+                )
+                if normalized is None:
+                    if paper_blocks:
+                        raise RuntimeError(f"CVF paper has invalid BibTeX: {page_url}")
+                    continue
                 row, rich = normalized
+                if paper_blocks:
+                    pdf = re.search(rb'<a\s+href="([^"]+_paper\.pdf)"', block)
+                    if pdf:
+                        row["pdf_url"] = urljoin(page_url, pdf[1].decode("utf-8"))
                 rows.append(row)
                 rich_rows.append(rich)
     rows, rich_rows = deduplicate_bibliographic_rows(rows, rich_rows)
@@ -2232,6 +2278,486 @@ def fetch_accepted_list_html(
     raise RuntimeError("; ".join(errors))
 
 
+PAPERCEPT_PROGRAMS = {
+    ("IROS", 2025): ("IROS25", 1, ("Tuesday October 21", "Wednesday October 22", "Thursday October 23")),
+    ("ICRA", 2026): ("ICRA26", 3, ("Tuesday June 2", "Wednesday June 3", "Thursday June 4")),
+}
+
+
+def fetch_papercept_program(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    code, first_day, dates = PAPERCEPT_PROGRAMS[spec.key, year]
+    base = f"https://ras.papercept.net/conferences/conferences/{code}/program/"
+    rows, sources = {}, []
+    for day, date in enumerate(dates, first_day):
+        name = f"{code}_ContentListWeb_{day}.html"
+        url = base + name
+        raw, source = official_raw_snapshot(raw_dir, filename=name, url=url)
+        sources.append(source)
+        page = raw.decode("windows-1252")
+        if f"<title>{spec.key} {year} Program | {date}, {year}</title>" not in page:
+            raise RuntimeError(f"PaperCept returned an incorrect {spec.key} program page: {url}")
+        count = 0
+        for session in re.findall(r'<table class="trk">(.*?)</table>', page, re.S):
+            header = " ".join(strip_html_fragment(fragment) for fragment in
+                              re.findall(r'<tr class="sHdr">(.*?)</tr>', session, re.S))
+            track = next((name for name in ("Regular Session", "Interactive Session", "Award Session")
+                          if name in header), "")
+            if not track:
+                if 'class="pTtl"' in session and not re.search(
+                    r"Late Breaking Results|Workshop|Tutorial|Keynote|Plenary|Video Session", header,
+                ):
+                    raise RuntimeError(f"Unknown {spec.key} session type: {header}")
+                continue
+            papers = session.split('<tr class="pHdr">')[1:]
+            if len(papers) != session.count('class="pTtl"'):
+                raise RuntimeError(f"PaperCept has incomplete {spec.key} entries in {header}")
+            for paper in papers:
+                anchor = re.search(r'<a name="([a-z0-9]+_\d+)">', paper)
+                title = re.search(r'<span class="pTtl">(.*?)</span>', paper, re.S)
+                ids = re.findall(r"viewAbstract\('([1-9]\d*)'\)|name=\"modify([1-9]\d*)\"", paper)
+                paper_ids = {part for match in ids for part in match if part}
+                author_rows = re.findall(
+                    rf'<a href="{code}_AuthorIndexWeb\.html#[^"]+"[^>]*>(.*?)</a></td>\s*'
+                    r'<td class="r">(.*?)</td>', paper, re.S,
+                )
+                if not anchor or not title or len(paper_ids) != 1 or not author_rows:
+                    raise RuntimeError(f"PaperCept has an incomplete {spec.key} entry in {header}")
+                record_id = paper_ids.pop()
+                row = bibliographic_csv_row(
+                    spec=spec, year=year, source_type="official_papercept",
+                    source_id=f"PaperCept:{code}", source_record_id=f"{code}:{record_id}",
+                    source_url=url, title=strip_html_fragment(title[1]),
+                    authors=[strip_html_fragment(author) for author, _ in author_rows],
+                    paper_url=f"{url}#{anchor[1]}", track=track,
+                )
+                row["author_institutions"] = "; ".join(dict.fromkeys(filter(
+                    None, (strip_html_fragment(affiliation) for _, affiliation in author_rows),
+                )))
+                detail = re.search(rf'<div id="Ab{record_id}"[^>]*>(.*?)</div>', paper, re.S)
+                if "viewAbstract(" in title[1] and not detail:
+                    raise RuntimeError(f"PaperCept has no abstract block for {code}:{record_id}")
+                if detail:
+                    row["abstract"] = strip_html_fragment(detail[1].partition("<strong>Abstract:</strong>")[2])
+                    row["keywords"] = "; ".join(strip_html_fragment(keyword) for keyword in re.findall(
+                        rf'<a href="{code}_KeywordIndexWeb\.html#[^"]+"[^>]*>(.*?)</a>', detail[1], re.S,
+                    ))
+                prior = rows.setdefault(record_id, row)
+                if any(prior[field] != row[field] for field in
+                       ("title", "authors", "author_institutions", "abstract", "keywords")):
+                    raise RuntimeError(f"Conflicting {spec.key} records for {record_id}")
+                count += 1
+        if not count:
+            raise RuntimeError(f"PaperCept has no main-track papers on {date}")
+    papers = list(rows.values())
+    return papers, [{"normalized": row} for row in papers], sources
+
+
+def fetch_pmlr_proceedings(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    archive = "https://proceedings.mlr.press/"
+    raw, listing = official_raw_snapshot(raw_dir, filename="pmlr_archive.html", url=archive)
+    volumes = re.findall(
+        rf'<li>\s*<a href="(v\d+)"><b>Volume \d+</b></a>\s*(?:Proceedings of )?{spec.key} {year}(?: Proceedings)?\s*</li>',
+        raw.decode("utf-8"), flags=re.IGNORECASE,
+    )
+    if len(volumes) != 1:
+        raise RuntimeError(f"PMLR did not identify exactly one {spec.key} {year} proceedings volume")
+    volume = volumes[0]
+    url = f"{archive}{volume}/assets/bib/bibliography.bib"
+    raw, bibliography = official_raw_snapshot(raw_dir, filename=f"{spec.key.lower()}_proceedings.bib", url=url)
+    entries = parse_bibtex_entries(raw)
+    if not any(entry["_entry_type"] == "proceedings" and entry["_citation_key"].casefold() == f"{spec.key.lower()}{year}"
+               for entry in entries):
+        raise RuntimeError(f"PMLR bibliography does not identify {spec.key} {year}")
+    papers = [entry for entry in entries if entry["_entry_type"] == "inproceedings"]
+    if not papers or len(papers) != len(re.findall(rb"@inproceedings\b", raw, re.I)):
+        raise RuntimeError(f"PMLR {spec.key} {year} bibliography is empty or incomplete")
+    by_key = {}
+    for entry in papers:
+        key = entry["_citation_key"]
+        if key in by_key and by_key[key] != entry:
+            raise RuntimeError(f"Conflicting PMLR bibliography entries for {key}")
+        by_key[key] = entry
+    rows, rich = [], []
+    for entry in by_key.values():
+        if clean_bibtex_text(entry.get("volume", "")) != volume[1:]:
+            raise RuntimeError(f"Unexpected PMLR volume for {entry['_citation_key']}")
+        normalized = normalize_bibtex_record(
+            entry, spec=spec, year=year, source_type="official_pmlr",
+            source_id=f"PMLR:{volume}", collection_url=url,
+        )
+        if normalized is None:
+            raise RuntimeError(f"Incomplete PMLR record {entry['_citation_key']}")
+        row, record = normalized
+        row.update(abstract=clean_bibtex_text(entry.get("abstract", "")),
+                   pdf_url=clean_bibtex_text(entry.get("pdf", "")),
+                   volume=volume[1:], pages=clean_bibtex_text(entry.get("pages", "")),
+                   publication_year=clean_bibtex_text(entry.get("year", "")))
+        rows.append(row)
+        rich.append(record)
+    unique_keys = {row["source_record_id"] for row in rows}
+    if len(rows) != len(unique_keys):
+        raise RuntimeError(f"PMLR {spec.key} {year} has duplicate normalized paper IDs")
+    return rows, rich, [listing, bibliography]
+
+
+def fetch_ecva_index(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    url = "https://www.ecva.net/papers.php"
+    raw, source = official_raw_snapshot(raw_dir, filename="ecva_index.html", url=url)
+    page = raw.decode("utf-8")
+    section = re.search(
+        rf"ECCV {year} Papers\s*</button>.*?<dl>(.*?)</dl>", page, re.S,
+    )
+    if not section:
+        raise RuntimeError(f"ECVA did not return a complete ECCV {year} main proceedings index")
+
+    prefix = f"papers/eccv_{year}/papers_ECCV/"
+    source_id = f"ECVA:ECCV:{year}:main"
+    rows = []
+    ids = set()
+    for block in re.split(r'<dt class="ptitle">', section[1])[1:]:
+        entry = re.match(
+            rf"""\s*(?:<br\s*/?>\s*)?<a\s+href=["']?({re.escape(prefix)}html/[^"'<>\s]+_paper\.php)["']?\s*>
+                (.*?)</a>\s*</dt>\s*<dd>(.*?)</dd>""",
+            block, re.S | re.X,
+        )
+        if not entry:
+            raise RuntimeError(f"Invalid paper record in ECCV {year} main proceedings")
+        path, title_html, authors_html = entry.groups()
+        title = strip_html_fragment(title_html)
+        separator = r"\s+and\s+" if year == 2018 else r",+"
+        authors = [name.strip().rstrip("*").strip()
+                   for name in re.split(separator, strip_html_fragment(authors_html)) if name.strip()]
+        if not title or not authors or path in ids:
+            raise RuntimeError(f"Empty or duplicate ECVA paper record: {path}")
+        ids.add(path)
+        doi = re.search(r'https://link\.springer\.com/chapter/(10\.[^"\'\s<>]+)', block)
+        pdf = re.search(
+            rf"""<a href=["']?({re.escape(prefix)}papers/[^"'<>\s]+\.pdf)["']?\s*>\s*pdf\s*</a>""",
+            block, re.I,
+        )
+        row = bibliographic_csv_row(
+            spec=spec, year=year, source_type="official_ecva", source_id=source_id,
+            source_record_id=path, source_url=url, title=title, authors=authors,
+            booktitle="ECCV", doi=html.unescape(doi[1]) if doi else "",
+            paper_url=urljoin(url, path), track="Main",
+        )
+        if pdf:
+            row["pdf_url"] = urljoin(url, pdf[1])
+        rows.append(row)
+    if not rows:
+        raise RuntimeError(f"ECVA returned no ECCV {year} main proceedings papers")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
+def fetch_eccv2026_springer(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    seed = "978-3-032-37083-9"
+    index_url = f"https://link.springer.com/book/10.1007/{seed}"
+    raw, index = official_raw_snapshot(raw_dir, filename="springer_index.html", url=index_url)
+    volumes = {seed, *re.findall(
+        r'href="(?:https://link\.springer\.com)?/book/10\.1007/(978[\d-]+)"',
+        raw.decode("utf-8"),
+    )}
+    if len(volumes) != 78:
+        raise RuntimeError(f"Springer ECCV 2026 index contains {len(volumes)} of 78 volumes")
+    rows, rich_rows, sources, seen = [], [], [index], set()
+    retrieved = utc_now()
+    for volume in sorted(volumes):
+        isbn = volume.replace("-", "")
+        params = urlencode({"filter": f"isbn:{isbn},type:book-chapter", "rows": 100})
+        url = f"https://api.crossref.org/works?{params}"
+        raw, source = official_raw_snapshot(raw_dir, filename=f"{isbn}.json", url=url)
+        sources.append(source)
+        message = json.loads(raw)["message"]
+        items = message["items"]
+        if not items or len(items) != message["total-results"]:
+            raise RuntimeError(f"Incomplete Crossref chapter list for ECCV volume {isbn}")
+        for chapter in items:
+            doi = chapter["DOI"].casefold()
+            books = {re.sub(r"[^a-z0-9]", "", name.casefold()) for name in chapter["container-title"]}
+            if (doi in seen or not re.fullmatch(rf"10\.1007/{re.escape(volume)}_\d+", doi)
+                    or isbn not in chapter["ISBN"] or chapter["type"] != "book-chapter"
+                    or "computervisioneccv2026" not in books):
+                raise RuntimeError(f"Invalid or duplicate ECCV 2026 chapter: {doi}")
+            seen.add(doi)
+            if any(update.get("type") == "correction" and update.get("source") == "publisher"
+                   for update in chapter.get("update-to", [])):
+                continue
+            authors = [" ".join(filter(None, (a.get("given"), a.get("family")))) or a.get("name", "")
+                       for a in chapter.get("author", [])]
+            title = chapter["title"][0]
+            if not title.strip() or not authors or not all(authors):
+                raise RuntimeError(f"Incomplete ECCV 2026 title or author metadata: {doi}")
+            row = bibliographic_csv_row(
+                spec=spec, year=year, source_type="official_eccv_springer",
+                source_id="Springer:ECCV:2026:main", source_record_id=doi,
+                source_url=url, title=title, authors=authors, booktitle="ECCV",
+                doi=doi, paper_url=f"https://link.springer.com/chapter/{doi}", track="Main",
+            )
+            count = chapter.get("is-referenced-by-count")
+            if type(count) is int and count >= 0:
+                row.update(crossref_cited_by_count=count, crossref_citations_retrieved_at=retrieved)
+            row["abstract"] = strip_html_fragment(chapter.get("abstract") or "")
+            rows.append(row)
+            rich_rows.append({"normalized": row, "source_record": chapter})
+    # The 78 publisher tables of contents list 2837 DOI records, with two
+    # publisher-tagged corrections. The overview reports 2834 papers.
+    if len(rows) != 2835:
+        raise RuntimeError(f"ECCV 2026 snapshot contains {len(rows)} of 2835 main proceedings papers")
+    return rows, rich_rows, sources
+
+
+def fetch_neurips_proceedings(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    url = f"https://proceedings.neurips.cc/paper_files/paper/{year}"
+    if year == 2025:
+        url += "/vol38-main-conference"
+    raw, source = official_raw_snapshot(raw_dir, filename="neurips_proceedings.html", url=url)
+    page = raw.decode("utf-8")
+    book = re.search(r'<h1 class="book-title">(.*?)</h1>', page, re.S)
+    count = re.search(r'<span class="paper-count">(\d+) papers?</span>', page)
+    if not book or not count or not re.search(rf'<p class="book-meta">(?:NeurIPS|NIPS) {year}</p>', page):
+        raise RuntimeError(f"NeurIPS proceedings did not identify the {year} volume")
+    booktitle = strip_html_fragment(book[1])
+    rows = []
+    ids = set()
+    for path, title_html, authors_html, track_html in re.findall(
+        r'<a title="paper title" href="([^"]+)">(.*?)</a>\s*'
+        r'<span class="paper-authors">(.*?)</span>\s*</div>\s*'
+        r'(?:<span class="paper-track-badge">(.*?)</span>)?',
+        page, re.S,
+    ):
+        if not re.fullmatch(rf"/paper_files/paper/{year}/hash/[0-9a-f]{{32}}-Abstract(?:-[\w-]+)?\.html", path):
+            raise RuntimeError(f"Unexpected NeurIPS proceedings paper link: {path}")
+        title = strip_html_fragment(title_html)
+        authors = [name.strip() for name in strip_html_fragment(authors_html).split(",") if name.strip()]
+        if not title or path in ids:
+            raise RuntimeError(f"Empty or duplicate NeurIPS proceedings record: {path}")
+        ids.add(path)
+        rows.append(bibliographic_csv_row(
+            spec=spec, year=year, source_type="official_neurips", source_id=f"NeurIPS:{year}:proceedings",
+            source_record_id=path, source_url=url, title=title, authors=authors,
+            booktitle=booktitle, paper_url=urljoin(url, path), track=strip_html_fragment(track_html),
+        ))
+    if not rows or len(rows) != int(count[1]):
+        raise RuntimeError(f"NeurIPS {year} proceedings expected {count[1]} papers, parsed {len(rows)}")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
+def fetch_iclr_2017_openreview(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    venue = "ICLR.cc/2017/conference"
+    params = dict(term=venue, content="venueid", type="exact", limit=1000,
+                  offset=0, count="true", sort="tmdate:asc", venueid=venue)
+    url = "https://api.openreview.net/notes/search?" + urlencode(params)
+    raw, source = official_raw_snapshot(raw_dir, filename="iclr_2017_openreview.json", url=url)
+    data = json.loads(raw)
+    notes = data["notes"]
+    if year != 2017 or len(notes) != data["count"]:
+        raise RuntimeError("ICLR 2017 OpenReview archive is incomplete")
+    rows = []
+    for note in notes:
+        content = note["content"]
+        if content.get("venueid") != venue:
+            raise RuntimeError("ICLR 2017 OpenReview archive returned a different venue ID")
+        if content.get("venue") not in {"ICLR 2017 Poster", "ICLR 2017 Oral"}:
+            continue
+        row, _ = normalize_openreview_note(note, spec=spec, year=year)
+        row.update(source_type="official_iclr_legacy_openreview", source_id="ICLR:2017:openreview",
+                   track="Main Conference Track")
+        rows.append(row)
+    identifiers = {row["openreview_id"] for row in rows if row["openreview_id"]}
+    if len(rows) != 198 or len(identifiers) != 198:
+        raise RuntimeError(f"ICLR 2017 OpenReview archive expected 198 unique accepted papers, parsed {len(rows)}")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
+def fetch_iclr_historical_program(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    if year == 2020:
+        url = "https://iclr.cc/virtual_2020/papers.json"
+        raw, source = official_raw_snapshot(raw_dir, filename="iclr_program.json", url=url)
+        notes = json.loads(raw)
+        if len(notes) != 687 or len({note["id"] for note in notes}) != 687:
+            raise RuntimeError("ICLR 2020 program does not contain 687 unique papers")
+        rows = []
+        for note in notes:
+            row, _ = normalize_openreview_note(note, spec=spec, year=year)
+            if note["forum"] != note["id"] or note["content"]["iclr_id"] != note["id"] or not row["title"] or not row["authors"]:
+                raise RuntimeError(f"Incomplete ICLR 2020 accepted paper: {note['id']}")
+            row.update(source_type="official_iclr_program", source_id="ICLR:2020:program",
+                       source_url=url, paper_url=row["openreview_url"], track="Main Conference Track",
+                       abstract=row["abstract"].strip())
+            rows.append(row)
+        return rows, [{"normalized": row} for row in rows], [source]
+    url = f"https://iclr.cc/static/virtual/data/iclr-{year}-orals-posters.json"
+    raw, source = official_raw_snapshot(raw_dir, filename="iclr_program.json", url=url)
+    data = json.loads(raw)
+    entries = data["results"]
+    if data.get("next") or data["count"] != len(entries):
+        raise RuntimeError(f"Incomplete ICLR {year} program")
+    # Each accepted oral in these editions also has a poster entry.
+    decisions = {"Poster", "Spotlight", "Oral", "Accept (Poster)", "Accept (Spotlight)", "Accept (Oral)",
+                 "Accept: poster", "Accept: notable-top-25%", "Accept: notable-top-5%"}
+    rows = []
+    for entry in entries:
+        if entry["eventtype"] != "Poster":
+            continue
+        if year == 2023 and entry.get("sourceurl") == "https://api.github.com/repos/JmlrOrg/v23":
+            continue
+        forum_links = [entry.get("paper_pdf_url"), *(media.get("uri") for media in entry.get("eventmedia", []))]
+        forums = {match[1] for link in forum_links
+                  if (match := re.fullmatch(r"https://openreview.net/forum\?id=([\w-]+)", link or ""))}
+        if len(forums) != 1 or entry["decision"] not in decisions or not entry["name"] or not entry["authors"]:
+            raise RuntimeError(f"Incomplete ICLR {year} accepted poster: {entry['id']}")
+        forum, = forums
+        paper_url = f"https://openreview.net/forum?id={forum}"
+        row = bibliographic_csv_row(
+            spec=spec, year=year, source_type="official_iclr_program", source_id=f"ICLR:{year}:program",
+            source_record_id=forum, source_url=url, title=entry["name"],
+            authors=[author["fullname"] for author in entry["authors"]], paper_url=paper_url,
+            track="Main Conference Track",
+        )
+        row.update(openreview_id=forum, openreview_url=paper_url, abstract=entry.get("abstract") or "",
+                   keywords="; ".join(entry.get("keywords") or []))
+        rows.append(row)
+    expected = {2021: 860, 2022: 1095, 2023: 1574}[year]
+    if len(rows) != expected or len({row["source_record_id"] for row in rows}) != expected:
+        raise RuntimeError(f"ICLR {year} program expected {expected} unique accepted papers, parsed {len(rows)}")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
+def fetch_neurips_2021_datasets(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    url = "https://datasets-benchmarks-proceedings.neurips.cc/paper_files/paper/2021"
+    raw, source = official_raw_snapshot(raw_dir, filename="neurips_2021_datasets.html", url=url)
+    page = raw.decode("utf-8")
+    if year != 2021 or "NeurIPS Datasets and Benchmarks 2021" not in page:
+        raise RuntimeError("NeurIPS Datasets and Benchmarks volume does not identify 2021")
+    rows = []
+    for path, title, authors in re.findall(
+        r'<a title="paper title" href="([^"]+)">(.*?)</a>\s*<i>(.*?)</i>', page, re.S,
+    ):
+        if not re.fullmatch(r"/paper_files/paper/2021/hash/[0-9a-f]{32}-Abstract-round[12]\.html", path):
+            raise RuntimeError(f"Unexpected NeurIPS Datasets and Benchmarks paper link: {path}")
+        rows.append(bibliographic_csv_row(
+            spec=spec, year=year, source_type="official_neurips_2021_datasets",
+            source_id="NeurIPS:2021:Datasets_and_Benchmarks", source_record_id=path, source_url=url,
+            title=strip_html_fragment(title), authors=strip_html_fragment(authors).split(", "),
+            paper_url=urljoin(url, path), track="Datasets and Benchmarks Track",
+        ))
+    if len(rows) != 174 or len({row["source_record_id"] for row in rows}) != 174:
+        raise RuntimeError(f"NeurIPS 2021 Datasets and Benchmarks expected 174 unique papers, parsed {len(rows)}")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
+def fetch_ijcai_proceedings(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    prefix = f"/proceedings/{year}/"
+    url = f"https://ijcai.org{prefix}"
+    raw, source = official_raw_snapshot(raw_dir, filename="ijcai_proceedings.html", url=url)
+    page = raw.decode("utf-8")
+    count = re.search(r'<p class="volume-head__meta">\s*([\d,]+) papers?\b', page)
+    if not count:
+        raise RuntimeError(f"IJCAI {year} proceedings did not report its paper count")
+    sections = re.split(r'<div class="section_title"><h3>(.*?)</h3></div>', page, flags=re.S)
+    rows = []
+    ids = set()
+    for heading, section in zip(sections[1::2], sections[2::2]):
+        track = strip_html_fragment(heading)
+        for block in re.split(r'<div class="paper_wrapper paper-row" id="paper', section)[1:]:
+            link = re.search(r'<a class="title" href="([^"]+)">(.*?)</a>', block, re.S)
+            authors_block = re.search(r'<div class="authors">(.*?)</div>', block, re.S)
+            paper_id = re.match(r'([1-9]\d*)"', block)
+            if not link or not authors_block or not paper_id:
+                raise RuntimeError(f"Incomplete IJCAI {year} proceedings record")
+            identifier = paper_id[1]
+            doi = f"10.24963/ijcai.{year}/{identifier}"
+            if year == 2011:
+                doi = f"10.5591/978-1-57735-516-8/IJCAI11-{int(identifier):03d}"
+            doi_links = re.findall(r'href="https://doi\.org/([^"]+)"', block)
+            pdf_path = f"{prefix}{int(identifier):04d}.pdf"
+            has_pdf = f'href="{pdf_path}"' in block
+            missing_legacy_pdf = year == 2007 and identifier == "139" and ">PDF</a>" not in block
+            if (identifier in ids or link[1] != prefix + identifier
+                    or (doi_links and doi_links != [doi]) or not (has_pdf or missing_legacy_pdf)):
+                raise RuntimeError(f"Conflicting IJCAI {year} proceedings identifiers: {identifier}")
+            title = strip_html_fragment(link[2])
+            authors = [strip_html_fragment(author) for author in re.findall(
+                r'<a\b[^>]*>(.*?)</a>', authors_block[1], re.S,
+            )]
+            ids.add(identifier)
+            if year == 2013 and identifier == "18" and title == "Contact Information" and not authors:
+                continue
+            if year == 2003 and identifier == "142" and title == "Dynamic Probabilistic Relational Models" and not authors:
+                # The official PDF (2003/0142.pdf), p. 992, supplies the author line.
+                authors = ["Sumit Sanghai", "Pedro Domingos", "Daniel Weld"]
+            if year == 1985 and identifier == "264" and title == "Models in expert systems" and not authors:
+                # The official PDF (1985/0264.pdf), p. 1308, supplies the author line.
+                authors = ["Brian Smith"]
+            if year == 1977 and not authors:
+                if identifier == "149" and title == "RE-EXAMINING PHYSICAL CONSTRAINTS":
+                    # Pages 637–641 are the continuation of Woodham's record 148.
+                    continue
+                if identifier == "224" and title == "ARTJ?ICIAL INTELLIGENCE IN WESTERN EUROPE":
+                    # Author line on p. 964 of the official panel addendum.
+                    authors = ["J. Pitrat", "E. Sandewall", "W. Bibel", "G. Huet", "H. H. Nagel", "M. Somalvico"]
+            if year == 1979 and not authors:
+                # The official PDFs supply the missing bylines and named panel chairs.
+                pdf_authors = {
+                    ('23', 'FINDING THE AXIS OF AN EGG'): ['Mike Brady'],
+                    ('223', 'SOLVING MECHANICS PROBLEMS USING META-LEVEL INFERENCE'): ['Alan Bundy', 'Lawrence Byrd', 'George Luger', 'Chris Mellish', 'Martha Palmer'],
+                    ('224', 'What is an Image?'): ['Harold Cohen'],
+                    ('225', 'FLATS, A MACHINE FOR NUMERICAL, SYMBOLIC AND ASSOCIATIVE COMPUTING'): ['Eiichi Goto', 'Tetsuo Ida', 'Kei Hiraki', 'Masayuki Suzuki', 'Nobuyuki Inada'],
+                    ('226', 'UTTERANCE AND OBJECTIVE: ISSUES IN NATURAL LANGUAGE COMMUNICATION'): ['Barbara J. Grosz'],
+                    ('227', 'PROBLEM SOLVING TACTICS'): ['Earl D. Sacerdoti'],
+                    ('228', 'Artificial Intellicence Research Stret..... In the Lltht of AI Models of Scientific Dlecovwy'): ['Herbert A. Simon'],
+                    ('229', 'Skill of Intelligent Robot'): ['Kunikatsu Takase'],
+                    ('230', 'PANEL ON DEALING WITH UNCERTAINTY'): ['Randall Davis'],
+                    ('231', 'PANEL: HISTORY OF ARTIFICIAL INTELLIGENCE RESEARCH, 1956-61'): ['Edward A. Feigenbaum'],
+                    ('232', 'PANEL ON APPLICATION OF LANGUAGE PROCESSING SYSTEMS'): ['Makoto Nagao', 'Hozumi Tanaka', 'Donald Walker', 'Dave Waltz', 'Yorick Wilks'],
+                    ('233', 'A PANEL ON INDUSTRIAL APPLICATION OF ROBOTICS'): ['Yoshiaki Shirai'],
+                    ('234', 'VISUAL INFORMATION PROCESSING: The structure and creation of visual repr~entations'): ['David Marr'],
+                    ('235', 'SOME SPECULATIONS ON LANGUAG E'): ['Bernard Meltzer'],
+                    ('238', 'IMAGE PROCESSIKG BY EIPERIKENTAL ARRAYED PROCESSOR'): ['Hitoshi Matsushima', 'Takeshi Uno', 'Masakazu Ejiri'],
+                }
+                authors = pdf_authors.get((identifier, title), [])
+            if year == 1983 and not authors:
+                # Author lines on the first page of the three official panel PDFs.
+                panel_authors = {
+                    ("10", "PANEL DISCUSSION UNDER WHAT CONDITIONS CAN A MACHINE ATTRIBUTE MEANINGS TO SYMBOLS"): "Aaron Sloman",
+                    ("11", "PANEL DISCUSSION UNDER WHAT CONDITIONS CAN A MACHINE ATTRIBUTE MEANINGS TO SYMBOLS?"): "Drew McDermott",
+                    ("12", "IJCAI SYMPOSIUM UNDER WHAT CONDITIONS CAN A MACHINE USE SYMBOLS WITH MEANING?"): "W. A. Woods",
+                }
+                if author := panel_authors.get((identifier, title)):
+                    authors = [author]
+            if not title or not authors:
+                raise RuntimeError(f"Missing title or authors for IJCAI {year} record {identifier}")
+            row = bibliographic_csv_row(
+                spec=spec, year=year, source_type="official_ijcai", source_id=f"IJCAI:{year}:proceedings",
+                source_record_id=identifier, source_url=url, title=title, authors=authors,
+                booktitle="IJCAI", paper_url=urljoin(url, link[1]), doi=doi if doi_links else "", track=track,
+            )
+            row["pdf_url"] = urljoin(url, pdf_path) if has_pdf else ""
+            rows.append(row)
+    advertised = int(count[1].replace(",", ""))
+    if not rows or len(ids) != advertised:
+        raise RuntimeError(f"IJCAI {year} proceedings expected {advertised} records, parsed {len(ids)}")
+    return rows, [{"normalized": row} for row in rows], [source]
+
+
 def fetch_official_conference(
     raw_dir: Path, *, spec: ConferenceSpec, year: int
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -2239,6 +2765,24 @@ def fetch_official_conference(
         return fetch_acl_anthology(raw_dir, spec=spec, year=year)
     if spec.official_adapter == "cvf_openaccess":
         return fetch_cvf_openaccess(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_pmlr":
+        return fetch_pmlr_proceedings(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_eccv_springer":
+        return fetch_eccv2026_springer(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_ecva":
+        return fetch_ecva_index(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_neurips":
+        return fetch_neurips_proceedings(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_neurips_2021_datasets":
+        return fetch_neurips_2021_datasets(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_iclr_program":
+        return fetch_iclr_historical_program(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_iclr_legacy_openreview":
+        return fetch_iclr_2017_openreview(raw_dir, spec=spec, year=year)
+    if spec.source_kind == "official_ijcai":
+        return fetch_ijcai_proceedings(raw_dir, spec=spec, year=year)
+    if (spec.key, year) in PAPERCEPT_PROGRAMS:
+        return fetch_papercept_program(raw_dir, spec=spec, year=year)
     if spec.official_adapter == "ieee_vis_json":
         return fetch_ieee_vis_json(raw_dir, spec=spec, year=year)
     if spec.official_adapter == "sigmod_accepted_html":
@@ -2275,6 +2819,19 @@ def build_official_conference_outputs(
     write_csv(csv_path, rows, CSV_FIELDS)
     write_jsonl(jsonl_path, rich_rows)
     selected_source = rows[0].get("source_type", "official_public_source") if rows else ""
+    source_warnings = {
+        "official_ijcai": "Official published volume, including labeled tracks listed in that volume.",
+        "official_neurips": "Official published volume, including labeled tracks listed in that volume.",
+        "official_ecva": "Official ECVA main proceedings index. Workshop records are excluded.",
+        "official_eccv_springer": (
+            "Springer volume contents and Crossref agree on 2835 papers after removing "
+            "two publisher-tagged corrections. Springer's overview reports 2834 papers."
+        ),
+        "official_papercept": "Official technical program. Includes regular, interactive and award sessions.",
+        "official_pmlr": "Official PMLR proceedings, grouped by the conference event year.",
+        "official_iclr_program": "Official main conference program with accepted presentations and OpenReview forum IDs.",
+        "official_iclr_legacy_openreview": "Archived OpenReview conference notes with explicit oral or poster acceptance.",
+    }
     manifest = {
         "dataset": f"{spec.display_name} {year} official public paper list",
         "conference": spec.key,
@@ -2282,6 +2839,10 @@ def build_official_conference_outputs(
         "ccf": ccf_metadata(spec),
         "year": year,
         "collection_id": spec.collection_id(year),
+        **({"collection_scope": "main_proceedings"}
+           if selected_source in {"official_ecva", "official_eccv_springer"} else {}),
+        **({"collection_scope": "published_proceedings"} if selected_source in {"official_neurips", "official_ijcai"} else {}),
+        **({"collection_scope": "technical_program"} if selected_source == "official_papercept" else {}),
         "source_kind": selected_source,
         "source_id": rows[0].get("source_id", "") if rows else "",
         "venue_id": "",
@@ -2298,7 +2859,10 @@ def build_official_conference_outputs(
         },
         "virtual_stats": {},
         "warnings": [
-            "Official source selected before DBLP. Availability depends on the venue's public release schedule."
+            source_warnings.get(
+                selected_source,
+                "Official source selected before DBLP. Availability depends on the venue's public release schedule.",
+            )
         ],
         "sources": sources,
         "collection_status": "fetched_from_sources",
@@ -2471,6 +3035,24 @@ def normalize_dblp_record(
         clean_normalized_text("".join(item.itertext()).strip())
         for item in record.findall("ee")
     ]
+    if spec.key == "AAAI" and year in {2000, 2008} and any(
+        urlparse(url).hostname in {"aaai.org", "www.aaai.org"}
+        and urlparse(url).path.startswith(f"/Library/IAAI/{year}/")
+        for url in electronic_editions
+    ):
+        return None
+    if spec.key == "AAAI" and year == 2000 and record_key == "conf/aaai/BarishKCMPS00":
+        # The archived IAAI table includes this entry without an electronic edition.
+        return None
+    iaai_article_numbers = {2002: r"12[1-9]|13[0-8]", 2006: r"28[4-9]|29\d|30[0-4]", 2007: r"27[3-9]|28\d|29[0-4]"}
+    if spec.key == "AAAI" and year in iaai_article_numbers and any(
+        urlparse(url).hostname in {"aaai.org", "www.aaai.org"}
+        and re.fullmatch(rf"/Library/AAAI/{year}/aaai{year % 100:02}-(?:{iaai_article_numbers[year]})\.php",
+                         urlparse(url).path)
+        for url in electronic_editions
+    ):
+        # These combined volumes use AAAI paths even for their IAAI sections.
+        return None
     doi = xml_child_text(record, "doi")
     if not doi:
         doi_link = next((item for item in electronic_editions if "doi.org/" in item), "")
@@ -2479,6 +3061,10 @@ def normalize_dblp_record(
     source_url = f"https://dblp.org/rec/{record_key}"
     booktitle = xml_child_text(record, "booktitle") or xml_child_text(record, "journal")
     pages = xml_child_text(record, "pages")
+    if spec.key == "AAAI" and year == 2005 and (page_range := re.fullmatch(r"(\d+)-(\d+)", pages)):
+        # The IAAI section occupies these pages in the combined 2005 volume.
+        if 1451 <= int(page_range[1]) <= int(page_range[2]) <= 1583:
+            return None
     if spec.dblp_min_page_count:
         count = dblp_page_count(pages)
         if count is None or count < spec.dblp_min_page_count:
@@ -2550,10 +3136,62 @@ def normalize_dblp_record(
     return csv_row, {"normalized": csv_row, "dblp_record": raw_record}
 
 
+def fetch_aaai_archived_dblp(
+    raw_dir: Path, *, spec: ConferenceSpec, year: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    volume, next_track, expected_count = {
+        1997: ("aaai97", '<div class="footer">', 181),
+        1998: ("aaai98", "<h3>SIGART / AAAI Doctoral Consortium Abstracts</h3>", 184),
+        1999: ("aaai99", "<h2>AAAI-99 Intelligent Systems Demos</h2>", 176),
+        2004: ("aaai2004", "<h3>Student Abstracts</h3>", 170),
+    }[year]
+    url = f"https://www-old.sigmod.org/publications/dblp/db/conf/aaai/{volume}.html"
+    raw, source = official_raw_snapshot(raw_dir, filename=f"aaai{year}_dblp_archive.html", url=url)
+    page = raw.decode("latin-1")
+    main, separator, colocated = page.partition("<h2>Innovative Applications of Artificial Intelligence Papers</h2>")
+    _, track_marker, other_tracks = colocated.partition(next_track)
+    if not separator or not track_marker or not page.rstrip().endswith("</body></html>"):
+        raise RuntimeError(f"Incomplete AAAI {year} archived DBLP table of contents")
+    track = ""
+    rows, rich_rows = [], []
+    ids = set()
+    for block in re.split(r"(?m)(?=^<h[234]>|^<li>)", main + track_marker + other_tracks)[1:]:
+        if block.startswith(("<h2>", "<h3>", "<h4>")):
+            track = strip_html_fragment(block.splitlines()[0])
+            continue
+        entry = re.match(
+            r'<li>(.+?):\s*\n(.+?)\s*\n(\d+(?:-\d+)?)\s+<font[^>]*><a href="[^"]*/rec/bibtex/(conf/aaai/[^"]+)">',
+            block, re.S,
+        )
+        if not entry or entry[4] in ids or not track:
+            raise RuntimeError(f"Incomplete or duplicate AAAI {year} archived DBLP entry")
+        author_html, title_html, pages, key = entry.groups()
+        authors = re.findall(r'<a\b[^>]*>(.*?)</a>', author_html, re.S)
+        record = ET.Element("inproceedings", key=key)
+        for field, value in (("title", strip_html_fragment(title_html)), ("pages", pages),
+                             ("year", str(year)), ("booktitle", "AAAI")):
+            ET.SubElement(record, field).text = value
+        for author in authors:
+            ET.SubElement(record, "author").text = strip_html_fragment(author)
+        normalized = normalize_dblp_record(record, spec=spec, year=year, volume_url=url)
+        if normalized is None:
+            raise RuntimeError(f"Invalid AAAI {year} archived DBLP entry: {key}")
+        row, rich = normalized
+        row["track"] = track
+        ids.add(key)
+        rows.append(row)
+        rich_rows.append(rich)
+    if len(rows) != expected_count:
+        raise RuntimeError(f"Expected {expected_count} AAAI {year} archived DBLP entries, found {len(rows)}")
+    return rows, rich_rows, [source]
+
+
 def fetch_dblp_conference(
     raw_dir: Path, *, spec: ConferenceSpec, year: int
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Fetch published conference-volume records from DBLP's XML exports."""
+    if spec.key == "AAAI" and year in {1997, 1998, 1999, 2004}:
+        return fetch_aaai_archived_dblp(raw_dir, spec=spec, year=year)
     volume_urls, source_meta = dblp_volume_urls(raw_dir, spec=spec, year=year)
     csv_rows: list[dict[str, Any]] = []
     jsonl_rows: list[dict[str, Any]] = []
@@ -2934,6 +3572,27 @@ def build_conference_outputs(
     refresh: bool,
     include_rows: bool,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    if spec.key == "ECCV" and year == 2026:
+        spec = replace(spec, source_kind="official_eccv_springer")
+    elif spec.key == "ECCV" and year >= 2018:
+        spec = replace(spec, source_kind="official_ecva")
+    if spec.key == "ICLR" and year in {2020, 2021, 2022, 2023}:
+        spec = replace(spec, source_kind="official_iclr_program")
+    if spec.key == "ICLR" and year == 2017:
+        spec = replace(spec, source_kind="official_iclr_legacy_openreview")
+    if spec.key == "ICML" and 2013 <= year <= 2022:
+        spec = replace(spec, source_kind="official_pmlr")
+    if spec.key == "NIPS" and year <= 2022 and spec.source_kind != "official_neurips_2021_datasets":
+        spec = replace(spec, source_kind="official_neurips")
+    if spec.key == "IJCAI" and (year >= 1981 or year in {1969, 1971, 1973, 1975, 1977, 1979}):
+        spec = replace(spec, source_kind="official_ijcai")
+    if spec.key == "AAAI" and 2010 <= year <= 2024:
+        spec = replace(spec, source_kind="crossref_journal", issns=("2374-3468", "2159-5399"))
+    print_journal_issns = {"J_IJCV": ("0920-5691", "1573-1405"), "J_TPAMI": ("0162-8828", "1939-3539")}
+    if spec.key in print_journal_issns and 2022 <= year <= 2024:
+        spec = replace(spec, source_kind="crossref_journal_print", issns=print_journal_issns[spec.key])
+    if spec.key == "ICRA" and year == 2026:
+        spec = replace(spec, source_kind="official_papercept")
     if not refresh:
         cached = load_cached_conference_outputs(
             output_root,
@@ -2943,7 +3602,11 @@ def build_conference_outputs(
         )
         if cached is not None:
             cached_manifest = cached[0]
-            if (
+            if (spec.source_kind in {"official_iclr_program", "official_iclr_legacy_openreview"}
+                    and cached_manifest.get("source_kind") == "openreview"
+                    and cached_manifest.get("counts", {}).get("openreview_current_accepted") == 0):
+                cached = None
+            elif (
                 spec.requires_official_source
                 and cached_manifest.get("source_kind") == "dblp_fallback"
             ):
@@ -2975,9 +3638,14 @@ def build_conference_outputs(
 
     if spec.source_kind == "official_then_dblp":
         return build_official_then_dblp_outputs(output_root, spec=spec, year=year)
+    if spec.source_kind in {"official_pmlr", "official_ecva", "official_eccv_springer", "official_neurips", "official_ijcai",
+                            "official_neurips_2021_datasets", "official_iclr_program", "official_iclr_legacy_openreview"}:
+        return build_official_conference_outputs(output_root, spec=spec, year=year)
+    if (spec.key, year) in PAPERCEPT_PROGRAMS:
+        return build_official_conference_outputs(output_root, spec=spec, year=year)
     if spec.source_kind == "dblp":
         return build_dblp_conference_outputs(output_root, spec=spec, year=year)
-    if spec.source_kind in {"dblp_stream", "crossref_journal"}:
+    if spec.source_kind in {"dblp_stream", "crossref_journal", "crossref_journal_print"}:
         if not __package__:
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from code.fetch_venue_metadata import build_outputs
@@ -3312,8 +3980,8 @@ def valid_year(value: str) -> int:
         year = int(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("year must be an integer") from exc
-    if year < 2000 or year > 2100:
-        raise argparse.ArgumentTypeError("year must be between 2000 and 2100")
+    if year < 1900 or year > 2100:
+        raise argparse.ArgumentTypeError("year must be between 1900 and 2100")
     return year
 
 
@@ -3380,7 +4048,7 @@ def main(argv: list[str] | None = None) -> int:
     output_root = args.output_dir.resolve()
 
     selected_keys = (
-        list(CONFERENCE_SPECS)
+        [entry["key"] for entry in CCF_CATALOG["venues"]]
         if args.conference == "ALL"
         else [args.conference]
     )

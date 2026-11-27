@@ -107,12 +107,14 @@ class MetadataTests(unittest.TestCase):
     def test_crossref_earliest_publication_year_and_issn(self):
         article = {'DOI':'10.123/ABC', 'type':'journal-article', 'title':['A <i>study</i>'],
                    'ISSN':['2833-0528'], 'published':{'date-parts':[[2024,12]]},
-                   'published-print':{'date-parts':[[2025]]}, 'abstract':'<p>Abstract</p>'}
+                   'published-print':{'date-parts':[[2025]]}, 'abstract':'<p>Abstract</p>',
+                   'is-referenced-by-count':0}
         with patch.object(metadata, 'fetch_json', return_value={'message':{'items':[article], 'total-results':1}}):
             manifest, rows, _ = metadata.build_outputs(self.root, spec=c.CONFERENCE_SPECS['J_JATS'], year=2024)
             self.assertEqual(rows[0]['title'], 'A study')
             self.assertEqual(rows[0]['abstract'], 'Abstract')
             self.assertEqual(rows[0]['doi'], '10.123/abc')
+            self.assertEqual(rows[0]['crossref_cited_by_count'], 0)
             self.assertIn('最早', manifest['publication_year_policy'])
             article['ISSN']=['0000-0000']
             with self.assertRaisesRegex(RuntimeError, 'ISSN'):

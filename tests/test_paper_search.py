@@ -166,6 +166,28 @@ class LocalSearchTests(unittest.TestCase):
             self.assertEqual(report["summary"], result["summary"])
             self.assertEqual(report["coverage"], result["coverage"])
 
+    def test_topic_range_is_expanded_with_missing_year_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_snapshot(root, conference="ICCV", year=2021, source_kind="official_cvf_openaccess")
+            make_snapshot(root, conference="ICCV", year=2025, source_kind="official_cvf_openaccess")
+            config = {**topic_config(), "targets": [
+                {"conference": "ICCV", "from_year": 2021, "to_year": 2025, "step": 2},
+            ]}
+            config_path = root / "query.json"
+            collector.write_json(config_path, config)
+            output = root / "results"
+            with redirect_stdout(io.StringIO()):
+                status = search.main(["--config", str(config_path), "--snapshot-output-root", str(root),
+                                      "--output-dir", str(output)])
+            self.assertEqual(status, 1)
+            report = json.loads((output / "search_report.json").read_text())
+            self.assertEqual([(row["year"], row["status"]) for row in report["coverage"]],
+                             [(2021, "searched"), (2023, "missing"), (2025, "searched")])
+            config["targets"].append({"conference": "ICCV", "year": 2023})
+            with self.assertRaisesRegex(ValueError, "Duplicate"):
+                search.validate_config(config)
+
     def test_phrase_matches_complete_tokens(self):
         self.assertIsNone(titles.match_title("Agent Memorybank", '"agent memory"'))
         self.assertIsNotNone(titles.match_title("Agent Memory", '"agent memory"'))

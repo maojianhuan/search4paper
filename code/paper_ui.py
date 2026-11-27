@@ -54,7 +54,7 @@ UI_FETCHABLE_KEYS = tuple(
     collector.normalize_conference_argument(value)
     for value in UI_FETCHABLE_CONFERENCES
 )
-CONFERENCES = UI_FETCHABLE_CONFERENCES + ("ALL", "目录多选")
+CONFERENCES = UI_FETCHABLE_CONFERENCES + ("CORL", "IJRR", "RA-L", "ALL", "目录多选")
 YEAR_CHOICES = [""] + [str(y) for y in range(2000, 2031)]
 CURRENT_YEAR = "2026"
 DEFAULT_YEAR = _env("SEARCH4PAPER_UI_YEAR", CURRENT_YEAR)
@@ -451,14 +451,14 @@ class PaperUI:
         try:
             config = json.loads(Path(path).read_text(encoding="utf-8"))
             search.validate_config(config)
+            targets = search.expand_targets(config)
         except (OSError, ValueError, KeyError, TypeError, collector.argparse.ArgumentTypeError) as exc:
             messagebox.showerror("配置无效", str(exc))
             return
         self.topic_config = config
         self.search_mode.set("主题多字段")
         self._search_mode_changed()
-        targets = ", ".join(f"{t['conference']} {t['year']}" for t in config["targets"])
-        self.topic_config_hint.set(f"使用配置 {Path(path).name}：{targets}；分组 {', '.join(config['query_groups'])}；字段 {', '.join(config.get('search_fields', topic.SEARCH_FIELDS))}。上方手动会议/年份不生效。")
+        self.topic_config_hint.set(f"使用配置 {Path(path).name}：{len(targets)} 个会议/期刊年份；分组 {', '.join(config['query_groups'])}；字段 {', '.join(config.get('search_fields', topic.SEARCH_FIELDS))}。上方手动会议/年份不生效。")
         for widget in (self.topic_terms_entry, self.topic_context_entry, *self.field_buttons):
             widget.configure(state="disabled")
 
@@ -626,7 +626,7 @@ class PaperUI:
             if field not in ("title", "abstract"):
                 continue
             text, offset = (title, 0) if field == "title" else (abstract, len(prefix))
-            for start, end in topic.phrase_match_spans(text, term, exact=exact):
+            for start, end in topic.phrase_match_spans(text, term, exact=exact or hit.get("match_mode") == "exact"):
                 self.detail_view.tag_add("match", f"1.0+{offset + start}c", f"1.0+{offset + end}c")
 
     def _choose_venues(self, purpose: str) -> None:
@@ -1245,7 +1245,7 @@ class PaperUI:
             root = Path(self.output_root.get()).expanduser().resolve()
             if self.search_mode.get() == "主题多字段":
                 config = self._topic_request(root)
-                query, targets = None, config["targets"]
+                query, targets = None, search.expand_targets(config)
             else:
                 query = self.search_text.get().strip()
                 search.titles.parse_query(query)

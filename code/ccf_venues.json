@@ -13922,7 +13922,10 @@
       "catalog_url": "http://dblp.uni-trier.de/db/journals/trob/",
       "dblp_collection": "journals/trob",
       "aliases": [],
-      "issns": [],
+      "issns": [
+        "1552-3098",
+        "1941-0468"
+      ],
       "venue_filter": "",
       "professional_fields": [
         "交叉/综合/新兴"
@@ -13930,8 +13933,8 @@
       "catalog_pages": [
         68
       ],
-      "source_kind": "dblp_stream",
-      "mapping_note": ""
+      "source_kind": "crossref_journal",
+      "mapping_note": "按当前刊名的 ISSN 检索；DBLP 的 trob 流也收录前身期刊。"
     },
     {
       "key": "J_TCBB",

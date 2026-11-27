@@ -15,12 +15,36 @@ COVERAGE_FIELDS = ["conference", "year", "status", "paper_count", "abstract_coun
                    "missing_abstract_count", "match_count", "source_kind", "ccf_category", "ccf_type", "collection_scope", "local_pdf_count", "fetched_at_utc", "warnings"]
 
 
-def validate_config(config: dict[str, Any]) -> None:
+def expand_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(config, dict) or not isinstance(config.get("targets"), list) or not config["targets"]:
-        raise ValueError("targets must be a non-empty list of conference/year pairs")
-    targets = [titles.normalize_target(target) for target in config["targets"]]
-    if len(targets) != len(set(targets)):
+        raise ValueError("targets must be a non-empty list of conference/year targets")
+    targets = []
+    for target in config["targets"]:
+        if not isinstance(target, dict) or "conference" not in target:
+            raise ValueError("Each target requires a conference")
+        if "year" in target:
+            if {"from_year", "to_year", "step"} & target.keys():
+                raise ValueError("Use year or from_year/to_year per target")
+            years = [collector.valid_year(str(target["year"]))]
+        else:
+            if "from_year" not in target or "to_year" not in target:
+                raise ValueError("A target range requires from_year and to_year")
+            first = collector.valid_year(str(target["from_year"]))
+            last = collector.valid_year(str(target["to_year"]))
+            step = target.get("step", 1)
+            if type(step) is not int or step < 1 or last < first or (last - first) % step:
+                raise ValueError("A target range needs a positive integer step and reachable end year")
+            years = range(first, last + 1, step)
+        for year in years:
+            conference, year = titles.normalize_target({"conference": target["conference"], "year": year})
+            targets.append({"conference": conference, "year": year})
+    if len(targets) != len({(target["conference"], target["year"]) for target in targets}):
         raise ValueError("Duplicate conference/year targets")
+    return targets
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    expand_targets(config)
     fields = config.get("search_fields", list(topic.SEARCH_FIELDS))
     if not isinstance(fields, list) or not fields or any(field not in topic.SEARCH_FIELDS for field in fields):
         raise ValueError("search_fields must select title, abstract, keywords or tldr")
@@ -30,13 +54,22 @@ def validate_config(config: dict[str, Any]) -> None:
     for name, group in groups.items():
         if not isinstance(group, dict) or not isinstance(group.get("terms"), list) or not group["terms"]:
             raise ValueError(f"{name}: terms must be a non-empty list")
-        for key in ("terms", "standalone_terms"):
+        for key in ("terms", "standalone_terms", "exact_terms"):
             if not isinstance(group.get(key, []), list) or any(not isinstance(term, str) or not term.strip() for term in group.get(key, [])):
                 raise ValueError(f"{name}: {key} must contain non-empty strings")
+        if set(group.get("exact_terms", [])) - set(group["terms"]):
+            raise ValueError(f"{name}: exact_terms must be included in terms")
         if "direct" in group and not isinstance(group["direct"], bool):
             raise ValueError(f"{name}: direct must be true or false")
     if not isinstance(config.get("context_anchors", []), list) or any(not isinstance(term, str) or not term.strip() for term in config.get("context_anchors", [])):
         raise ValueError("context_anchors must contain non-empty strings")
+    labels = config.get("institution_labels", {})
+    if not isinstance(labels, dict) or any(
+        not topic.normalize_text(label) or not isinstance(aliases, list)
+        or any(not isinstance(alias, str) or not topic.normalize_text(alias) for alias in aliases)
+        for label, aliases in labels.items()
+    ):
+        raise ValueError("institution_labels must map institution names to lists of aliases")
 
 
 def load_local_papers(root: Path, targets: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
@@ -105,7 +138,8 @@ def search_local(root: Path, targets: list[dict], *, query: str | None = None,
         raise ValueError("Select exactly one of a title query or topic configuration")
     if config is not None:
         validate_config(config)
-        targets = config["targets"]
+        targets = expand_targets(config)
+        config = {**config, "targets": targets}
     parsed = titles.parse_query(query) if query is not None else None
     papers, coverage = load_local_papers(root, targets)
     summary = []
@@ -170,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--query requires --conference and --years")
     try:
         config = json.loads(args.config.read_text(encoding="utf-8")) if args.config else None
-        targets = config["targets"] if config else [dict(conference=c, year=y) for c in args.conference for y in args.years]
+        targets = expand_targets(config) if args.config else [dict(conference=c, year=y) for c in args.conference for y in args.years]
         result = search_local(args.snapshot_output_root, targets, query=args.query, config=config)
         write_search_outputs(args.output_dir, result, dict(query=args.query, config=config, targets=targets))
         print(coverage_text(result))
