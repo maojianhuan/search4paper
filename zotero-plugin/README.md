@@ -2,13 +2,13 @@
 
 在 Zotero 内检索、预览和导入会议、期刊论文，支持按专业领域和 CCF 分类筛选，并查找论文代码链接、检查 GitHub 仓库内容。
 
-[已发布的 0.1.6 XPI](https://github.com/maojianhuan/search4paper/releases/download/zotero-v0.1.6/search4paper-0.1.6.xpi) · [Release](https://github.com/maojianhuan/search4paper/releases/tag/zotero-v0.1.6)
+[0.1.8 XPI](https://github.com/maojianhuan/search4paper/releases/download/zotero-v0.1.8/search4paper-0.1.8.xpi) · [Release](https://github.com/maojianhuan/search4paper/releases/tag/zotero-v0.1.8)
 
-当前源码新增的 2026 年份、支持范围界面、代码仓库、期刊、关系图谱、跨来源搜索和普通搜索引用数功能尚未发布到上述 Release；本地候选版本为 0.1.8，请按文末步骤打包安装。机构标签界面仍待开发。
+0.1.8 包含 2026 年份、支持范围界面、代码仓库、期刊、关系图谱、跨来源搜索、普通搜索引用数及后续问题修复。机构标签和检索条件保存仍待开发。
 
 ## 安装和使用
 
-在 Zotero 10 的 **工具 → 插件 → 从文件安装插件** 中选择 XPI，重启后从工具菜单打开 search4paper。同版本覆盖安装也需重启。同一 XPI 适用于 Windows、Linux、macOS；运行不需要 Python、Node、EXE 或本地服务。
+在 Zotero 10 的 **工具 → 插件 → 从文件安装插件** 中选择 XPI，重启后从工具菜单打开 search4paper。已安装本地 0.1.8 候选包的用户请手动重新安装此发布包；同版本覆盖安装也需重启。同一 XPI 适用于 Windows、Linux、macOS；运行不需要 Python、Node、EXE 或本地服务。
 
 - **论文检索**：会议、期刊支持多选，年份支持分号列表或范围（例如 `2024; 2025`、`2024-2026`）；插件分别验证和缓存每个来源/年份，再合并检索，任一范围失败时不发布不完整结果。关键词以分号分隔，AND 全部满足，OR 任一满足。点击标题预览，勾选论文后可补全摘要或导入目标集合。
 - **跨来源搜索**：在论文检索页展开“跨来源搜索”，沿用上方关键词、字段、年份和来源选择。只读已有名单，并向 OpenReview / OpenAlex 发送分页关键词查询；不会下载全部会议名单或 PDF。每个远程查询每轮最多读取 50 条，通过“继续加载候选”读取下一页。结果复用预览、选择和导入，保留查询出处及时间；具体范围见下文。
@@ -159,9 +159,11 @@ node --test tests/test_zotero_plugin.cjs tests/test_zotero_arxiv.cjs tests/test_
 python3 zotero-plugin/build.py
 ```
 
-Windows 可用 `py -3 zotero-plugin/build.py`。Python 3 标准库仅用于打包，输出 `dist/search4paper-0.1.8.xpi`；不需要 EXE 生成器。源码变化后重新打包一次，跨平台无需重建。此版本当前仅作本地安装验收，未更新公开 Release 或自动更新清单。
+Windows 可用 `py -3 zotero-plugin/build.py`。Python 3 标准库仅用于打包，输出 `dist/search4paper-0.1.8.xpi`；不需要 EXE 生成器。源码变化后重新打包一次，跨平台无需重建。发布需用户明确授权；安装包上传成功后再启用对应自动更新清单。
 
 Git 跟踪源码、构建脚本和版本号；XPI 存放在 Release，不提交到 Git。推送带注释的 `zotero-v<版本>` 标签会运行[发布工作流](../.github/workflows/release-zotero.yml)，从标签源码测试、打包，创建或更新同名 Release 和安装包。插件通过 `updates.json` 向已安装用户提供后续版本。
+
+2026-11-27 发布准备：按用户指令统一发布 0.1.8，包含以下验收后的修复。重新运行 174 项 Node 测试通过；本地构建包含 29 个文件、256,520 字节，包内源码与通过 138 项 Linux Zotero 10.0.3 原生检查的版本逐文件一致。原 P1 候选包已保留在 `dist/p1-acceptance/search4paper-0.1.8.xpi`，发布验证记录位于 `dist/release-0.1.8/`。
 
 2026-11-27 问题修复验收：174 项 Node 测试通过；当前源码在隔离 Linux Zotero 10.0.3 中通过图谱 45 项、跨来源 46 项和引用数 47 项原生检查。远程查询使用模拟响应，实际执行图谱渲染、导入及 JSON 导出。另用两篇真实论文核验全文路径，确认公开 PDF 可取得、OpenReview 仍存在 HTTP 403 / challenge 限制；该联网诊断使用修复前启动的包，已存地址保留行为由新增回归测试验证。记录在 `dist/fixes-acceptance/`，具体范围与未验证项见 [TODO](../TODO.md)。源码版本保持 0.1.8，仅在临时目录打包测试，未覆盖此前验收包或发布。
 
