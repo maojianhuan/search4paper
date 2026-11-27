@@ -5,7 +5,9 @@ var Search4PaperUI = {
   acm: window.arguments[0].acmSession,
   activePage: "search", operationPage: null,
   papers: [], candidates: [], selected: new Set(), active: null,
+  searchMode: "official", crossSession: null,
   discoveryPapers: [], discoverySeeds: [], discoverySelected: new Set(), discoveryActive: null,
+  discoveryView: "list", discoveryGraph: null, discoveryAnalysis: null,
   materialTarget: null, materialCandidates: [], materialSelected: new Set(), materialSaved: new Set(),
   discoverySummary: "", openAlexRate: null, supportError: "",
   page: 0, pageSize: 100, busy: false, controller: null, query: null, loadedTargets: [], coverageRows: [], filtersDirty: true,
@@ -66,7 +68,7 @@ var Search4PaperUI = {
     this.$("year-support").classList.toggle("error", Boolean(this.supportError));
   },
   targetKey(target) { return `${target.conference}:${target.year}`; },
-  paperKey(paper) { return `${paper.venueID}:${paper.id}`; },
+  paperKey(paper) { return paper.crossKey || `${paper.venueID}:${paper.id}`; },
   switchPage(page) {
     this.activePage = page;
     for (const name of ["search", "discovery", "fulltext", "materials"]) {
@@ -75,6 +77,10 @@ var Search4PaperUI = {
       this.$("tab-" + name).tabIndex = name === page ? 0 : -1;
     }
     this.$("page-title").textContent = { search: "论文检索", discovery: "文献发现", fulltext: "全文获取", materials: "代码仓库" }[page];
+    if (page === "discovery" && this.discoveryView === "graph") {
+      if (this.discoveryGraph) this.discoveryGraph.resize();
+      else this.renderDiscoveryGraph();
+    }
   },
   status(text, error = false) {
     const page = this.operationPage || this.activePage;
@@ -94,17 +100,25 @@ var Search4PaperUI = {
     this.$("conference").disabled = noConference;
     this.$("fetch").disabled = this.$("refresh-papers").disabled = noConference || Boolean(this.supportError);
     this.$("filter").disabled = noConference || Boolean(this.supportError) || !this.papers.length;
+    this.$("cross-search").disabled = noConference;
+    this.$("cross-more").disabled = this.searchMode !== "cross" || this.filtersDirty || !this.crossSession
+      || !Search4PaperCrossSearch.hasMore(this.crossSession);
+    if (this.searchMode === "cross") this.$("filter").disabled = true;
     this.$("import").disabled = !this.selected.size || this.filtersDirty;
     this.$("import").title = this.filtersDirty ? "检索条件已修改，请先搜索论文或应用筛选。"
       : !this.selected.size ? "请勾选论文左侧的复选框，或点击“选中本页”。" : "导入到所选文献库位置。";
     this.$("select-page").disabled = !this.candidates.length;
     this.$("clear").disabled = !this.selected.size;
-    this.$("enrich-abstracts").disabled = !this.selected.size;
+    this.$("enrich-abstracts").disabled = !this.selected.size || this.searchMode === "cross";
+    this.$("enrich-citations").disabled = this.$("export-selected").disabled = !this.selected.size || this.filtersDirty;
+    this.$("citation-source").disabled = !this.active?.citation?.sourceURL;
+    this.$("enrich-abstracts").title = this.searchMode === "cross" ? "跨来源搜索只读名单；可在原名单检索中补全摘要。" : "补全选中论文缺少的摘要。";
     this.$("previous").disabled = this.page === 0;
     this.$("next").disabled = (this.page + 1) * this.pageSize >= this.candidates.length;
     this.$("source").disabled = !this.active;
     this.$("discovery-import").disabled = !this.discoverySelected.size;
     this.$("discovery-source").disabled = !this.discoveryActive;
+    this.$("discovery-pick").disabled = !this.discoveryPapers.some(paper => paper.id === this.discoveryActive?.id);
     this.$("materials-save").disabled = !this.materialTarget || !this.materialSelected.size;
   },
   updateConferenceOptions() {
@@ -124,11 +138,12 @@ var Search4PaperUI = {
       ? `CCF 2026 · 当前可选 ${names.length} / ${Search4PaperCore.VENUES.length} 个来源（共 ${Search4PaperCore.CONFERENCES.length} 个会议、${Object.keys(Search4PaperCore.JOURNAL_SOURCES).length} 本期刊）。三个目录条件同时满足。`
       : "当前组合暂无已支持来源，请调整目录筛选。";
     const changed = [...previous].sort().join("\n") !== this.selectedConferences().sort().join("\n");
-    if (changed && this.loadedTargets.length) {
+    if (changed && (this.loadedTargets.length || this.crossSession)) {
       this.filtersDirty = true;
       this.status("会议 / 期刊选择已改变；已有结果保留，更换来源后请重新搜索。");
     }
     this.updateSourceSupport();
+    this.updateCrossPlan();
     this.controls();
   },
   async operation(action) {
@@ -166,6 +181,54 @@ var Search4PaperUI = {
     this.$("field-rule").textContent = fields.length
       ? `查找位置：${fields.map(field => this.labels[field]).join(" / ")}。关键词可在任一勾选字段中命中，不同关键词可出现在不同字段。`
       : "请至少勾选一个查找位置。";
+    this.updateCrossPlan();
+  },
+  readCrossPlan() {
+    const targets = this.selectedConferences().flatMap(conference => this.selectedYears().map(year => ({ conference, year })));
+    return Search4PaperCrossSearch.plan(this.readQuery(), targets, this.$("cross-openalex").value);
+  },
+  updateCrossPlan() {
+    try {
+      const plan = this.readCrossPlan();
+      this.$("cross-plan").textContent = `每轮最多 ${plan.jobs.length} 个远程请求，每个请求最多 50 条候选（可重复）；只读 ${plan.targets.length} 个来源／年份的已有名单。继续加载由你手动触发。`;
+    }
+    catch (error) { this.$("cross-plan").textContent = error.message; }
+  },
+  async crossSearch(signal, more = false) {
+    if (more && (this.searchMode !== "cross" || this.filtersDirty || !this.crossSession)) throw new Error("检索条件已修改，请重新跨来源搜索。");
+    let session = more ? this.crossSession : this.readCrossPlan();
+    const selectedKeys = new Set(more ? this.candidates.filter(p => this.selected.has(this.paperKey(p)))
+      .flatMap(p => [...Search4PaperCore.identities(p)]) : []);
+    try {
+      if (!more) {
+        this.searchMode = "cross"; this.crossSession = null;
+        this.papers = []; this.candidates = []; this.selected.clear(); this.active = null; this.page = 0;
+        this.loadedTargets = []; this.coverageRows = []; this.query = null; this.filtersDirty = true;
+        this.render(); this.preview(null);
+        this.$("coverage").classList.add("cross-coverage");
+        this.$("coverage").textContent = "正在读取本地名单并查询远程候选；尚未发布本轮结果。";
+        session = await Search4PaperCrossSearch.readLocal(session, { signal, readMetadata: async target => {
+          const path = PathUtils.join(this.Zotero.DataDirectory.dir, "search4paper", target.conference, `${target.year}.json`);
+          return await IOUtils.exists(path) ? IOUtils.readJSON(path) : null;
+        } });
+      }
+      const next = await Search4PaperCrossSearch.next(session, { signal,
+        request: (url, requestSignal) => this.request(url, requestSignal), onProgress: text => this.status(text) });
+      const candidates = Search4PaperCrossSearch.results(next);
+      signal.throwIfAborted();
+      this.crossSession = next; this.query = next.query; this.papers = this.candidates = candidates;
+      this.selected = new Set(candidates.filter(p => [...Search4PaperCore.identities(p)].some(key => selectedKeys.has(key))).map(p => this.paperKey(p)));
+      this.page = Math.min(this.page, Math.max(0, Math.ceil(candidates.length / this.pageSize) - 1));
+      this.filtersDirty = false;
+      this.$("coverage").textContent = Search4PaperCrossSearch.coverage(next, candidates.length);
+      this.render(); this.preview(candidates.find(p => this.active && this.paperKey(p) === this.paperKey(this.active)) || candidates[0] || null);
+      this.status(`跨来源搜索：${candidates.length} 篇通过本地复核。${Search4PaperCrossSearch.hasMore(next) ? "仍有候选未读取，可继续加载。" : "本轮查询结束；覆盖范围见上方说明。"}`);
+    }
+    catch (error) {
+      this.$("coverage").textContent = more ? `${Search4PaperCrossSearch.coverage(this.crossSession, this.candidates.length)}\n本轮加载失败或取消；保留上次成功读取的结果与分页位置。`
+        : "本次跨来源搜索未完成，未发布部分结果；已有官方名单未修改。";
+      throw error;
+    }
   },
   async request(url, signal, responseType = "json") {
     signal.throwIfAborted();
@@ -200,15 +263,17 @@ var Search4PaperUI = {
       signal.throwIfAborted();
       if (github) throw Object.assign(new Error(`GitHub 请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${error.message}`),
         { status: error.status, apiMessage: error.xmlhttp?.response?.message });
-      if (openAlex && error.status === 429) throw new Error("OpenAlex API 今日额度已用尽或请求过快（HTTP 429）。请配置免费 API Key，或等待额度在 UTC 00:00 重置。");
+      if (openAlex && error.status === 429) throw Object.assign(new Error("OpenAlex API 今日额度已用尽或请求过快（HTTP 429）。请配置免费 API Key，或等待额度在 UTC 00:00 重置。"), { status: 429 });
       const missing = responseType === "html" ? "该论文来源地址不存在或已移除。" : "该来源年份的数据尚不可用。";
-      throw new Error(`论文来源请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${url}\n${error.status === 404 ? missing : error.message}`);
+      throw Object.assign(new Error(`论文来源请求失败${error.status ? `（HTTP ${error.status}）` : ""}：${url}\n${error.status === 404 ? missing : error.message}`), { status: error.status });
     }
     finally { signal.removeEventListener("abort", abort); }
   },
   async fetchPapers(signal, refresh = false) {
     const query = this.readQuery();
     const targets = this.selectedTargets();
+    this.searchMode = "official"; this.crossSession = null;
+    this.$("coverage").classList.remove("cross-coverage");
     this.papers = []; this.loadedTargets = []; this.coverageRows = []; this.query = null;
     this.candidates = []; this.selected.clear(); this.active = null; this.page = 0;
     this.render(); this.preview(null);
@@ -256,6 +321,7 @@ var Search4PaperUI = {
     await this.filterPapers(signal, query);
   },
   async filterPapers(signal, query = this.readQuery()) {
+    if (this.searchMode === "cross") throw new Error("跨来源结果需要按新条件重新跨来源搜索。");
     const selected = this.selectedTargets().map(target => this.targetKey(target)).sort();
     const loaded = this.loadedTargets.map(target => this.targetKey(target)).sort();
     if (selected.join("\n") !== loaded.join("\n")) throw new Error("会议、期刊或年份已更改，请点击“搜索论文”获取对应名单。");
@@ -273,9 +339,32 @@ var Search4PaperUI = {
     this.render(); this.preview(candidates[0] || null);
     this.status(`找到 ${candidates.length} 篇候选论文。请查看摘要与命中依据。`);
   },
+  orderedCandidates() {
+    const order = this.$("result-sort").value;
+    if (order !== "cited-desc" && order !== "cited-asc") return this.candidates;
+    return [...this.candidates].sort((a, b) => {
+      const left = this.citationCount(a), right = this.citationCount(b);
+      if (left === null) return right === null ? 0 : 1;
+      if (right === null) return -1;
+      return order === "cited-desc" ? right - left : left - right;
+    });
+  },
+  citationCount(paper) {
+    const value = paper.citation;
+    return value?.source === "OpenAlex" && value.status === "matched"
+      && Number.isInteger(value.count) && value.count >= 0 ? value.count : null;
+  },
+  citationLabel(paper) {
+    const count = this.citationCount(paper);
+    if (count !== null) return String(count);
+    return { matched: "未提供", not_found: "未找到", unmatched: "未匹配", error: "查询失败" }[paper.citation?.status] || "未查询";
+  },
+  selectedCandidates() {
+    return this.orderedCandidates().filter(paper => this.selected.has(this.paperKey(paper)));
+  },
   render() {
     const tbody = this.$("results"); tbody.replaceChildren();
-    for (const paper of this.candidates.slice(this.page * this.pageSize, (this.page + 1) * this.pageSize)) {
+    for (const paper of this.orderedCandidates().slice(this.page * this.pageSize, (this.page + 1) * this.pageSize)) {
       const key = this.paperKey(paper);
       const tr = document.createElementNS("http://www.w3.org/1999/xhtml", "tr"); tr.dataset.id = key;
       tr.classList.toggle("active", this.active && this.paperKey(this.active) === key);
@@ -289,8 +378,13 @@ var Search4PaperUI = {
       const title = document.createElementNS("http://www.w3.org/1999/xhtml", "button"); title.className = "paper-button"; title.textContent = paper.title;
       title.addEventListener("click", () => this.preview(paper));
       const fields = document.createElementNS("http://www.w3.org/1999/xhtml", "span"); fields.className = "match-fields";
-      fields.textContent = `${paper.venueID.split("/")[0]} ${paper.year} · ` + [...new Set(paper.evidence.map(hit => this.labels[hit.field]))].join(" · ");
-      choice.append(checkbox); text.append(title, fields); tr.append(choice, text); tbody.append(tr);
+      fields.textContent = `${paper.source === "openalex" ? paper.publicationTitle || "OpenAlex 来源未提供" : paper.venueID.split("/")[0]} ${paper.year} · `
+        + [...new Set(paper.evidence.map(hit => this.labels[hit.field]))].join(" · ")
+        + (paper.duplicateHint ? " · 疑似不同版本" : "");
+      const citations = document.createElementNS("http://www.w3.org/1999/xhtml", "td");
+      citations.className = "citation-count"; citations.textContent = this.citationLabel(paper);
+      citations.title = paper.citation ? `OpenAlex · ${paper.citation.retrievedAt}\n${paper.citation.message || paper.citation.matchMethod}` : "选中后查询引用数";
+      choice.append(checkbox); text.append(title, fields); tr.append(choice, text, citations); tbody.append(tr);
     }
     this.$("count").textContent = `候选论文 ${this.candidates.length} 篇`;
     this.$("empty").hidden = this.candidates.length > 0;
@@ -306,12 +400,19 @@ var Search4PaperUI = {
     this.active = paper;
     this.$("paper-title").textContent = paper?.title || "论文预览";
     this.$("authors").textContent = paper ? paper.authors.join("; ") : "";
+    this.$("citation-info").textContent = paper ? paper.citation
+      ? `OpenAlex 工作记录引用数：${this.citationLabel(paper)}\n查询时间：${paper.citation.retrievedAt}\n`
+        + [paper.citation.sourceURL, paper.citation.message].filter(Boolean).join("\n")
+      : "引用数尚未查询。" : "";
     this.$("publication-info").hidden = paper?.itemType !== "journalArticle";
     this.$("publication-info").textContent = paper?.itemType === "journalArticle" ? [paper.publicationTitle,
       paper.volume && `卷 ${paper.volume}`, paper.issue && `期 ${paper.issue}`, paper.pages && `页 ${paper.pages}`,
       `出版日期 ${paper.date}`, `年份依据：${paper.yearBasis}`,
       paper.onlineDate && `在线出版 ${paper.onlineDate}`, paper.printDate && `卷期出版 ${paper.printDate}`].filter(Boolean).join(" · ") : "";
     this.$("abstract").textContent = paper ? paper.abstract || "来源未提供摘要。" : "选择一篇候选论文。";
+    this.$("search-provenance-panel").hidden = !paper?.searchProvenance;
+    this.$("search-provenance").textContent = paper?.searchProvenance ? [paper.duplicateHint || "",
+      ...paper.searchProvenance.map(entry => `${entry.source} · ${entry.fetchedAt}\n${entry.url}`)].filter(Boolean).join("\n") : "";
     this.$("evidence").replaceChildren();
     for (const hit of paper?.evidence || []) {
       const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li"), label = document.createElementNS("http://www.w3.org/1999/xhtml", "strong");
@@ -334,7 +435,7 @@ var Search4PaperUI = {
     if (select.selectedIndex < 0) select.value = "";
   },
   async importPapers(signal) {
-    const papers = this.candidates.filter(p => this.selected.has(this.paperKey(p)));
+    const papers = this.selectedCandidates();
     if (!papers.length) throw new Error("请先选择论文。");
     if (this.filtersDirty) throw new Error("检索条件已修改，请先应用筛选。");
     this.status("正在检查文献库中的已有条目…");
@@ -353,6 +454,66 @@ var Search4PaperUI = {
     if (failed) summary += `\n${failed.paper.title}：${failed.error}`;
     if (signal.aborted) summary += " 已取消后续处理。";
     this.status(summary, Boolean(failed));
+  },
+  async enrichCitations(signal) {
+    if (this.filtersDirty) throw new Error("检索条件已修改，请先重新搜索或应用筛选。");
+    const papers = this.selectedCandidates();
+    if (!papers.length) throw new Error("请先选择论文。");
+    const results = [];
+    for (const paper of papers) {
+      if (signal.aborted) break;
+      this.status(`查询引用数 ${results.length + 1} / ${papers.length}：${paper.title}`);
+      let citation;
+      try {
+        citation = await Search4PaperCitations.lookup(paper, { signal,
+          request: (url, requestSignal) => this.request(url, requestSignal) });
+        signal.throwIfAborted();
+      }
+      catch (error) {
+        if (signal.aborted) break;
+        citation = { source: "OpenAlex", status: "error", count: null, retrievedAt: new Date().toISOString(),
+          sourceURL: "", matchMethod: "", message: error.message };
+        this.Zotero.logError(error);
+      }
+      paper.citation = citation;
+      for (const row of this.papers) if (this.paperKey(row) === this.paperKey(paper)) row.citation = citation;
+      if (this.crossSession) {
+        const keys = Search4PaperCore.identities(paper);
+        for (const row of this.crossSession.records) {
+          if ([...Search4PaperCore.identities(row)].some(key => keys.has(key))) row.citation = citation;
+        }
+      }
+      results.push(paper);
+      // A request failure stops this explicit batch; completed papers remain visible.
+      if (citation.status === "error") break;
+    }
+    this.render(); this.preview(this.active);
+    const known = results.filter(paper => this.citationCount(paper) !== null).length;
+    const failed = results.find(paper => paper.citation.status === "error");
+    this.status(`引用数查询${signal.aborted ? "已取消" : failed ? "已停止" : "完成"}：取得 ${known}，未知 ${results.length - known}，未处理 ${papers.length - results.length}。`
+      + (failed ? `\n${failed.title}：${failed.citation.message}` : ""), Boolean(failed));
+  },
+  selectedExport() {
+    if (this.filtersDirty) throw new Error("检索条件已修改，请先重新搜索或应用筛选。");
+    const papers = this.selectedCandidates();
+    if (!papers.length) throw new Error("请先选择论文。");
+    return { exportedAt: new Date().toISOString(), query: this.query, papers: papers.map(paper => ({
+      id: paper.id, venueID: paper.venueID, title: paper.title, authors: paper.authors, year: paper.year,
+      doi: paper.doi, url: paper.url, abstract: paper.abstract, evidence: paper.evidence,
+      citation: paper.citation || null, ...(paper.searchProvenance ? { searchProvenance: paper.searchProvenance } : {})
+    })) };
+  },
+  async exportSelected() {
+    const data = this.selectedExport();
+    const { FilePicker } = ChromeUtils.importESModule("chrome://zotero/content/modules/filePicker.mjs");
+    const picker = new FilePicker();
+    picker.init(window, "导出选中论文与引用信息", picker.modeSave);
+    picker.defaultString = "search4paper-selected.json"; picker.defaultExtension = "json";
+    picker.appendFilter("JSON", "*.json");
+    const result = await picker.show();
+    if (result !== picker.returnOK && result !== picker.returnReplace) return;
+    await IOUtils.writeUTF8(picker.file, JSON.stringify(data, null, 2) + "\n");
+    this.status(`已导出 ${data.papers.length} 篇选中论文及引用信息。`);
   },
   async enrichAbstracts(signal) {
     const papers = this.candidates.filter(paper => this.selected.has(this.paperKey(paper)) && !paper.abstract.trim());
@@ -391,7 +552,7 @@ var Search4PaperUI = {
     }
     for (const target of [...changedTargets].filter(Boolean)) {
       const venueID = Search4PaperCore.venueID(target.conference, target.year);
-      const rows = this.papers.filter(paper => paper.venueID === venueID);
+      const rows = this.papers.filter(paper => paper.venueID === venueID).map(({ citation, ...paper }) => paper);
       const coverage = this.coverageRows.find(row => row.conference === target.conference && row.year === target.year);
       const path = PathUtils.join(this.Zotero.DataDirectory.dir, "search4paper", target.conference, `${target.year}.json`);
       await IOUtils.writeJSON(path, { schemaVersion: 1, venueID, year: target.year,
@@ -438,23 +599,35 @@ var Search4PaperUI = {
   async discover(signal) {
     const items = [...(this.Zotero.getActiveZoteroPane()?.getSelectedItems() || [])];
     this.discoveryPapers = []; this.discoverySeeds = []; this.discoverySelected.clear(); this.discoveryActive = null;
+    this.discoveryAnalysis = null;
+    this.discoverySummary = "";
     this.renderDiscovery();
     const result = await Search4PaperDiscovery.expand(items, this.Zotero, {
       signal, request: (url, requestSignal, type) => this.request(url, requestSignal, type),
-      onProgress: message => this.status(message)
+      onProgress: message => this.status(message), deep: this.$("discovery-deep").checked
     });
     signal.throwIfAborted();
     await Search4PaperDiscovery.markLibraryStatus(this.Zotero, result.papers);
     signal.throwIfAborted();
     this.discoverySeeds = result.seeds; this.discoveryPapers = result.papers;
-    const count = relation => result.papers.filter(paper => paper.relations.includes(relation)).length;
+    this.discoveryAnalysis = Search4PaperGraph.analyze(result.seeds, result.papers, result.evidencePapers);
+    const count = relation => result.papers.filter(paper => Search4PaperDiscovery.hasRelation(paper, relation)).length;
     this.discoverySummary = `种子 ${result.seeds.length} 篇 · 相关结果 ${result.papers.length} 篇 · 参考文献 ${count("reference")} · 后续引用 ${count("citation")} · 相关论文 ${count("related")}。参考文献完整分批读取；后续引用按每篇种子的引用数排序，最多取 ${result.citationLimitPerSeed} 篇。`;
+    if (result.coverage) {
+      const coverage = result.coverage;
+      const clipped = coverage.expansion.filter(row => row.referenceCount > row.queriedReferences
+        || row.couplingTotal > row.couplingObserved || row.couplingOmitted || row.cocitedOmitted).length;
+      this.discoverySummary += ` 深入发现新增 ${coverage.newCandidates} 篇；共享参考文献 ${count("coupling")} 篇，共同被引用 ${count("cocitation")} 篇。`
+        + `每种子最多使用前 ${coverage.referenceLimit} 个参考文献入口，两条路径各最多新增 ${coverage.candidateLimitPerKind} 篇；每组引用查询最多 ${coverage.citingLimitPerQuery} 篇。`
+        + ` ${clipped} 篇种子的扩展达到范围上限，${coverage.evidenceQueries.filter(row => row.truncated).length} 组共被引证据达到查询上限。`
+        + (coverage.missingDetails.length ? ` ${coverage.missingDetails.length} 篇候选未返回详情，未加入结果。` : "");
+    }
     this.renderDiscovery(); this.previewDiscovery(this.discoveryVisible()[0] || null);
     this.status("相关文献扩展完成。可按关系筛选并选择导入。", false);
   },
   renderDiscovery() {
     const tbody = this.$("discovery-results"), papers = this.discoveryVisible(); tbody.replaceChildren();
-    const labels = { reference: "参考文献", citation: "后续引用", related: "相关论文" };
+    const labels = { reference: "参考文献", citation: "后续引用", related: "相关论文", coupling: "共享参考文献", cocitation: "共同被引用" };
     const libraryLabels = { new: "尚未导入", existing: "已在库、无 PDF", pdf: "已在库、有 PDF" };
     for (const paper of papers) {
       const tr = document.createElementNS("http://www.w3.org/1999/xhtml", "tr"); tr.dataset.id = paper.id;
@@ -462,36 +635,147 @@ var Search4PaperUI = {
       const choice = document.createElementNS("http://www.w3.org/1999/xhtml", "td");
       const checkbox = document.createElementNS("http://www.w3.org/1999/xhtml", "input"); checkbox.type = "checkbox";
       checkbox.checked = this.discoverySelected.has(paper.id); checkbox.setAttribute("aria-label", `选择 ${paper.title}`);
-      checkbox.addEventListener("change", () => { if (checkbox.checked) this.discoverySelected.add(paper.id); else this.discoverySelected.delete(paper.id); this.controls(); });
+      checkbox.addEventListener("change", () => this.selectDiscoveryPaper(paper, checkbox.checked));
       choice.append(checkbox);
       const text = document.createElementNS("http://www.w3.org/1999/xhtml", "td");
       const title = document.createElementNS("http://www.w3.org/1999/xhtml", "button"); title.className = "paper-button"; title.textContent = paper.title;
       title.addEventListener("click", () => this.previewDiscovery(paper));
       const reason = document.createElementNS("http://www.w3.org/1999/xhtml", "span"); reason.className = "match-fields";
-      reason.textContent = `${paper.year || "年份未知"} · ${paper.relations.map(value => labels[value]).join(" / ")} · ${libraryLabels[paper.libraryStatus]} · 排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
+      const relations = Search4PaperDiscovery.withObservedRelations(paper).relations;
+      reason.textContent = `${paper.year || "年份未知"} · ${relations.map(value => labels[value]).join(" / ")} · ${libraryLabels[paper.libraryStatus]} · 排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
       text.append(title, reason); tr.append(choice, text); tbody.append(tr);
     }
     this.$("discovery-empty").hidden = papers.length > 0;
     this.$("discovery-empty").textContent = this.discoveryPapers.length ? "当前关系筛选下没有论文。" : "点击“扩展相关文献”开始。";
-    if (this.discoverySummary) this.$("discovery-summary").textContent = `${this.discoverySummary} 当前筛选显示 ${papers.length} 篇。`;
+    this.$("discovery-summary").textContent = this.discoverySummary
+      ? `${this.discoverySummary} 当前筛选显示 ${papers.length} 篇。` : "尚未扩展种子论文。";
+    const visibleActive = papers.find(paper => paper.id === this.discoveryActive?.id)
+      || this.discoverySeeds.find(paper => paper.id === this.discoveryActive?.id);
+    this.previewDiscovery(visibleActive || papers[0] || null);
+    this.renderDiscoveryGraph(papers);
     this.controls();
+  },
+  selectDiscoveryPaper(paper, checked) {
+    if (this.busy || !this.discoveryPapers.some(candidate => candidate.id === paper?.id)) return;
+    if (checked) this.discoverySelected.add(paper.id); else this.discoverySelected.delete(paper.id);
+    this.syncDiscoverySelection(); this.controls();
+  },
+  syncDiscoverySelection() {
+    this.$("discovery-import").textContent = `导入到主窗口当前集合（${this.discoverySelected.size}）`;
+    this.$("discovery-pick").checked = this.discoverySelected.has(this.discoveryActive?.id);
+    for (const row of this.$("discovery-results").children) {
+      row.querySelector("input").checked = this.discoverySelected.has(row.dataset.id);
+    }
+    if (this.discoveryGraph) for (const node of this.discoveryGraph.nodes()) {
+      node.toggleClass("queued", this.discoverySelected.has(node.id()));
+      node.toggleClass("active", node.id() === this.discoveryActive?.id);
+    }
+  },
+  setDiscoveryView(view) {
+    this.discoveryView = view;
+    this.$("discovery-list").hidden = view !== "list";
+    this.$("discovery-graph-panel").hidden = view !== "graph";
+    this.$("discovery-workspace").classList.toggle("graph-view", view === "graph");
+    for (const name of ["list", "graph"]) this.$(`discovery-${name}-view`).setAttribute("aria-pressed", String(view === name));
+    this.renderDiscoveryGraph();
+  },
+  renderDiscoveryGraph(papers) {
+    this.discoveryGraph?.destroy(); this.discoveryGraph = null;
+    this.$("discovery-edge-info").hidden = true;
+    if (this.discoveryView !== "graph" || this.activePage !== "discovery") return;
+    try {
+      const threshold = this.$("graph-threshold").value.trim();
+      if (!threshold) throw new Error("请填写共同参考文献相似度阈值（0–1）。");
+      const graph = Search4PaperGraph.build(this.discoverySeeds, papers || this.discoveryVisible(), {
+        limit: Number(this.$("graph-limit").value), minSimilarity: Number(threshold),
+        citations: this.$("graph-citations").checked, related: this.$("graph-related").checked,
+        coupling: this.$("graph-coupling").checked, cocitation: this.$("graph-cocitation").checked,
+        selection: this.$("graph-selection").value,
+        analysis: this.discoveryAnalysis || Search4PaperGraph.analyze(this.discoverySeeds, this.discoveryPapers)
+      });
+      this.discoveryGraph = Search4PaperGraph.create(this.$("discovery-graph"), graph, {
+        onPaper: paper => { if (!this.busy) this.previewDiscovery(paper); },
+        onEdge: edge => { if (!this.busy) this.previewDiscoveryEdge(edge); }
+      });
+      const years = graph.nodes.map(node => node.paper.year).filter(Number.isFinite);
+      this.$("graph-summary").classList.remove("error");
+      this.$("graph-summary").textContent = graph.nodes.length
+        ? `${graph.seedCount} 篇种子 + ${graph.shownCandidates} / ${graph.candidateCount} 篇筛选候选，${graph.edges.length} 条连线。`
+          + (years.length ? `年份 ${Math.min(...years)}–${Math.max(...years)}。` : "")
+          + (graph.selection === "similarity" ? "按与任一种子的最高联合相似度选点；同分沿用列表顺序。" : "按列表顺序选点。")
+          + (graph.shownCandidates < graph.candidateCount ? "列表仍保留全部结果。" : "")
+          + (graph.missingReferences ? `${graph.missingReferences} 篇未提供参考文献，联合分数未知；仍可显示共被引证据。` : "")
+          + `共被引使用 ${graph.witnessCount} 篇已采集论文；${graph.missingWitnessReferences} 篇缺少参考文献，无法作为引用证据。`
+          + "种子始终保留。仅显示已获取范围；未连线不代表无关联。"
+        : "先在 Zotero 主窗口选择种子论文，再点击“扩展相关文献”。";
+      this.syncDiscoverySelection();
+    }
+    catch (error) {
+      this.discoveryGraph?.destroy(); this.discoveryGraph = null;
+      this.$("graph-summary").textContent = `图谱生成失败：${error.message}`;
+      this.$("graph-summary").classList.add("error");
+      this.Zotero.logError(error);
+    }
+  },
+  previewDiscoveryEdge(edge) {
+    const papers = new Map([...(this.discoveryAnalysis?.witnesses.values() || []), ...this.discoverySeeds, ...this.discoveryPapers].map(paper => [paper.id, paper]));
+    const source = papers.get(edge.source), target = papers.get(edge.target);
+    this.$("discovery-edge-info").hidden = false;
+    const description = edge.kind === "citation"
+      ? `“${source.title}” 引用 “${target.title}”。依据：${edge.evidence.join("、")}。`
+      : edge.kind === "related" ? `“${source.title}” 与 “${target.title}”：OpenAlex 推荐关系，不表示相互引用。推荐来源如下。`
+        : (edge.kind === "coupling"
+          ? `“${source.title}” 与 “${target.title}” 共同引用 ${edge.evidence.length} 篇文献，参考文献并集 ${edge.unionCount} 篇。`
+          : `“${source.title}” 与 “${target.title}” 被 ${edge.evidence.length} 篇已采集论文共同引用，已采集引用者并集 ${edge.unionCount} 篇。`)
+          + `Jaccard 相似度 = ${edge.evidence.length} / ${edge.unionCount} = ${edge.score.toFixed(3)}。`
+          + (edge.combinedScore === null ? "参考文献缺失，联合分数未知。"
+            : `联合分数 = (${edge.bibliographicScore.toFixed(3)} + ${edge.cocitationScore.toFixed(3)}) / 2 = ${edge.combinedScore.toFixed(3)}。`)
+          + "以下是对应证据；共被引仅代表已采集范围，此评分不是 Connected Papers 的评分。";
+    this.$("discovery-edge-description").textContent = description;
+    const list = this.$("discovery-edge-evidence"); list.replaceChildren();
+    if (edge.kind !== "citation") for (const id of edge.evidence) {
+      const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+      const link = document.createElementNS("http://www.w3.org/1999/xhtml", "button"); link.className = "paper-button";
+      link.textContent = papers.has(id) ? `${papers.get(id).title} (${id})` : `${id}（未加载详情，打开 OpenAlex）`;
+      link.addEventListener("click", () => this.Zotero.launchURL(`https://openalex.org/${id}`));
+      li.append(link); list.append(li);
+    }
+    this.$("discovery-edge-info").scrollIntoView({ block: "nearest" });
   },
   previewDiscovery(paper) {
     this.discoveryActive = paper;
+    this.$("discovery-title").closest(".preview").scrollTop = 0;
+    this.$("discovery-edge-info").hidden = true;
+    this.discoveryGraph?.edges().removeClass("active");
+    const isSeed = this.discoverySeeds.some(seed => seed.id === paper?.id);
+    this.$("discovery-seed-label").hidden = !isSeed;
     this.$("discovery-title").textContent = paper?.title || "论文预览";
     this.$("discovery-authors").textContent = paper ? `${paper.authors.join("; ")}${paper.publicationTitle ? ` · ${paper.publicationTitle}` : ""}` : "";
     this.$("discovery-abstract").textContent = paper?.abstract || (paper ? "OpenAlex 未提供摘要。" : "选择一篇相关论文。");
     this.$("discovery-reasons").replaceChildren();
-    const labels = { reference: "是种子论文的参考文献", citation: "引用了种子论文", related: "OpenAlex 判定为相关论文" };
-    for (const relation of paper?.relations || []) {
-      const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li"); li.textContent = `${labels[relation]}：${paper.seedTitles.join("；")}`; this.$("discovery-reasons").append(li);
+    const labels = { reference: "是种子论文的参考文献", citation: "引用了种子论文", related: "OpenAlex 判定为相关论文",
+      coupling: "与种子共享参考文献", cocitation: "与种子共同被引用（已采集范围）" };
+    const evidencePaper = paper && Search4PaperDiscovery.withObservedRelations(paper);
+    for (const entry of evidencePaper?.relationEvidence || []) {
+      const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+      li.textContent = `${labels[entry.relation]}：${entry.seedTitle} (${entry.seedID})`
+        + (entry.via?.length ? `；证据：${entry.via.join("、")}` : ""); this.$("discovery-reasons").append(li);
     }
     if (paper) {
       const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
-      li.textContent = `当前排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
+      li.textContent = isSeed ? "本次查询的种子论文。"
+        : `当前排序依据：${Search4PaperDiscovery.rankingExplanation(paper, this.$("discovery-sort").value)}`;
       this.$("discovery-reasons").append(li);
+      const score = this.discoveryAnalysis?.seedScores.get(paper.id);
+      if (score) {
+        const detail = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+        detail.textContent = score.score === null ? "参考文献缺失，联合相似度未知；共被引证据仍可查看。"
+          : `与“${score.seedTitle}” (${score.seedID}) 的联合相似度 = (${score.bibliographic.score.toFixed(3)} + ${score.cocitation.score.toFixed(3)}) / 2 = ${score.score.toFixed(3)}（已采集范围）。`;
+        this.$("discovery-reasons").append(detail);
+      }
     }
     for (const row of this.$("discovery-results").children) row.classList.toggle("active", row.dataset.id === paper?.id);
+    this.syncDiscoverySelection();
     this.controls();
   },
   async importDiscovery(signal) {
@@ -562,19 +846,24 @@ var Search4PaperUI = {
         }
 
         let openReviewURLs = [];
+        const isStableOpenReviewPDF = url => /^https:\/\/openreview\.net\/pdf\/[a-f0-9]{40}\.pdf$/i.test(url || "");
+        const knownOpenReviewURLs = [paper.pdfURL, savedFullText].filter(isStableOpenReviewPDF);
         const openReviewFallback = Search4PaperImport.openReviewPDFURL?.(item)
           || (isHost(paper.pdfURL, ["openreview.net", "www.openreview.net"]) ? paper.pdfURL : "");
-        if (!result?.hasPDF && openReviewFallback && !signal.aborted) {
+        if (!result?.hasPDF && (openReviewFallback || knownOpenReviewURLs.length) && !signal.aborted) {
           try {
             openReviewURLs = await Search4PaperOpenReview.URLs(item, {
               signal, request: (url, requestSignal, type) => this.request(url, requestSignal, type)
             });
           }
           catch (error) { errors.push(`OpenReview 稳定地址解析：${error.message}`); }
-          if (!openReviewURLs.length) openReviewURLs = [openReviewFallback];
-          for (const url of [...new Set(openReviewURLs)]) {
+          // Retain saved object URLs if the title lookup fails or no longer finds
+          // this note, while keeping a freshly resolved object URL first.
+          openReviewURLs = [...openReviewURLs.filter(isStableOpenReviewPDF), ...knownOpenReviewURLs,
+            ...openReviewURLs.filter(url => !isStableOpenReviewPDF(url)), openReviewFallback];
+          for (const url of [...new Set(openReviewURLs.filter(Boolean))]) {
             if (result?.hasPDF || signal.aborted) break;
-            const stable = /^https:\/\/openreview\.net\/pdf\/[a-f0-9]{40}\.pdf$/i.test(url);
+            const stable = isStableOpenReviewPDF(url);
             [result] = await Search4PaperImport.findPDFs(this.Zotero, [{ item, paper }], {
               signal, direct: url, directLabel: stable ? "OpenReview 稳定 PDF" : "OpenReview PDF", native: false
             });
@@ -759,15 +1048,29 @@ var Search4PaperUI = {
     this.$("openalex-save").addEventListener("click", () => this.saveOpenAlexKey());
     this.$("openalex-clear").addEventListener("click", () => { this.$("openalex-key").value = ""; this.saveOpenAlexKey(); });
     this.$("discovery-cancel").addEventListener("click", () => { if (this.operationPage === "discovery") this.controller?.abort(); });
+    for (const view of ["list", "graph"]) this.$(`discovery-${view}-view`).addEventListener("click", () => this.setDiscoveryView(view));
+    this.$("discovery-pick").addEventListener("change", () => this.selectDiscoveryPaper(this.discoveryActive, this.$("discovery-pick").checked));
+    for (const id of ["graph-citations", "graph-related", "graph-coupling", "graph-cocitation", "graph-selection", "graph-threshold", "graph-limit"]) {
+      this.$(id).addEventListener("change", () => this.renderDiscoveryGraph());
+    }
+    this.$("graph-fit").addEventListener("click", () => { if (this.discoveryGraph) Search4PaperGraph.fit(this.discoveryGraph); });
+    this.$("graph-layout").addEventListener("click", () => { if (this.discoveryGraph) Search4PaperGraph.layout(this.discoveryGraph); });
+    for (const [id, factor] of [["graph-zoom-in", 1.3], ["graph-zoom-out", 1 / 1.3]]) {
+      this.$(id).addEventListener("click", () => {
+        const cy = this.discoveryGraph;
+        if (cy) cy.zoom({ level: Math.min(cy.maxZoom(), Math.max(cy.minZoom(), cy.zoom() * factor)),
+          renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+      });
+    }
     for (const id of ["discovery-relation", "discovery-year-from", "discovery-year-to", "discovery-type",
       "discovery-library", "discovery-oa", "discovery-sort"]) {
       this.$(id).addEventListener("input", () => {
-        try { this.renderDiscovery(); if (this.discoveryActive) this.previewDiscovery(this.discoveryActive); }
+        try { this.renderDiscovery(); }
         catch (error) { this.status(error.message, true); }
       });
     }
-    this.$("discovery-select").addEventListener("click", () => { for (const paper of this.discoveryVisible()) this.discoverySelected.add(paper.id); this.renderDiscovery(); });
-    this.$("discovery-clear").addEventListener("click", () => { this.discoverySelected.clear(); this.renderDiscovery(); });
+    this.$("discovery-select").addEventListener("click", () => { for (const paper of this.discoveryVisible()) this.discoverySelected.add(paper.id); this.syncDiscoverySelection(); this.controls(); });
+    this.$("discovery-clear").addEventListener("click", () => { this.discoverySelected.clear(); this.syncDiscoverySelection(); this.controls(); });
     this.$("discovery-import").addEventListener("click", () => this.operation(signal => this.importDiscovery(signal)));
     this.$("discovery-source").addEventListener("click", () => this.Zotero.launchURL(this.discoveryActive.url));
     this.$("materials-find").addEventListener("click", () => this.operation(signal => this.findMaterials(signal)));
@@ -785,27 +1088,37 @@ var Search4PaperUI = {
         this.updateQuerySummary();
         if (input.id === "conference" || input.id === "year") this.updateSourceSupport();
         this.filtersDirty = true; this.controls();
-        this.status("检索条件已修改，请应用筛选；更换会议、期刊或年份后请重新搜索。");
+        this.status(this.searchMode === "cross" ? "检索条件已修改，请重新跨来源搜索。" : "检索条件已修改，请应用筛选；更换会议、期刊或年份后请重新搜索。");
       });
     }
+    this.$("cross-openalex").addEventListener("change", () => {
+      this.updateCrossPlan();
+      if (this.searchMode === "cross") { this.filtersDirty = true; this.controls(); }
+    });
+    this.$("cross-search").addEventListener("click", () => this.operation(signal => this.crossSearch(signal)));
+    this.$("cross-more").addEventListener("click", () => this.operation(signal => this.crossSearch(signal, true)));
     this.$("fetch").addEventListener("click", () => this.operation(signal => this.fetchPapers(signal)));
     this.$("refresh-papers").addEventListener("click", () => this.operation(signal => this.fetchPapers(signal, true)));
     this.$("filter").addEventListener("click", () => this.operation(signal => this.filterPapers(signal)));
     this.$("import").addEventListener("click", () => this.operation(signal => this.importPapers(signal)));
     this.$("enrich-abstracts").addEventListener("click", () => this.operation(signal => this.enrichAbstracts(signal)));
+    this.$("enrich-citations").addEventListener("click", () => this.operation(signal => this.enrichCitations(signal)));
+    this.$("export-selected").addEventListener("click", () => this.operation(() => this.exportSelected()));
+    this.$("result-sort").addEventListener("change", () => { this.page = 0; this.render(); });
+    this.$("citation-source").addEventListener("click", () => this.Zotero.launchURL(this.active.citation.sourceURL));
     this.$("cancel").addEventListener("click", () => {
       if (this.operationPage === "search") this.controller?.abort();
     });
     this.$("refresh").addEventListener("click", () => this.refreshCollections());
     this.$("select-page").addEventListener("click", () => {
-      for (const paper of this.candidates.slice(this.page * this.pageSize, (this.page + 1) * this.pageSize)) this.selected.add(this.paperKey(paper));
+      for (const paper of this.orderedCandidates().slice(this.page * this.pageSize, (this.page + 1) * this.pageSize)) this.selected.add(this.paperKey(paper));
       this.render();
     });
     this.$("clear").addEventListener("click", () => { this.selected.clear(); this.render(); });
     this.$("previous").addEventListener("click", () => { this.page--; this.render(); });
     this.$("next").addEventListener("click", () => { this.page++; this.render(); });
     this.$("source").addEventListener("click", () => this.Zotero.launchURL(this.active.url));
-    window.addEventListener("unload", () => this.controller?.abort());
+    window.addEventListener("unload", () => { this.controller?.abort(); this.discoveryGraph?.destroy(); });
     this.refreshCollections();
     const selected = this.Zotero.getActiveZoteroPane()?.getSelectedCollections() || [];
     if (selected.length === 1 && selected[0].libraryID === this.Zotero.Libraries.userLibraryID) this.$("collection").value = String(selected[0].id);

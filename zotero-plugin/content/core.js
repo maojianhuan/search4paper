@@ -563,16 +563,56 @@ var Search4PaperCore = (() => {
     return keys;
   }
 
+  function uniqueDOI(keys) {
+    const dois = new Set();
+    for (const key of keys) if (key.startsWith("doi:")) dois.add(key.slice(4));
+    if (dois.size > 1) throw new Error(`相同来源标识对应不同 DOI：${[...dois].join("、")}。请核对来源记录。`);
+    return dois.values().next().value || "";
+  }
+
+  function reconcileItemDOI(item, keys) {
+    const savedDOI = item.getField("DOI");
+    const stored = identities({ doi: savedDOI, extra: item.getField("extra") });
+    const doi = uniqueDOI([...keys, ...stored]);
+    if (doi && !savedDOI && keys.has("doi:" + doi)) item.setField("DOI", doi);
+  }
+
   const escapeHTML = text => String(text).replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  const noteParagraph = line => `<p>${escapeHTML(line)}</p>`;
+  const provenanceLine = entry => `${entry.source} | ${entry.fetchedAt} | ${entry.url}`;
+  const queryNoteLines = query => [
+    `Keywords: ${query.terms.join("; ")}`, `Match: ${query.operator}`, `Fields: ${query.fields.join(", ")}`
+  ];
+
+  function additionalSearchEvidence(html, sources, query) {
+    const conditions = queryNoteLines(query).map(noteParagraph).join("");
+    const previous = html.replace(/>\s+</g, "><").split(/(?=<p>Keywords: )/)
+      .filter(section => section.startsWith(conditions));
+    const additions = [...new Set(sources.map(entry => noteParagraph(provenanceLine(entry))))]
+      .filter(paragraph => !previous.some(section => section.includes(paragraph)));
+    return additions.length ? noteParagraph("Additional cross-source retrieval") + conditions + additions.join("") : "";
+  }
+
+  function citationNote(citation) {
+    if (!citation) return "";
+    const count = citation.status === "matched" && Number.isInteger(citation.count) && citation.count >= 0
+      ? citation.count : "unknown";
+    return noteParagraph(`OpenAlex work citations: ${count} | Status: ${citation.status} | Retrieved: ${citation.retrievedAt} | ${citation.sourceURL} | ${citation.matchMethod} | ${citation.message || ""}`);
+  }
+
   function evidenceNote(paper, query) {
-    const lines = ["Imported by search4paper", `Source: ${paper.url}`, `Venue: ${paper.venueID}`,
-      `Keywords: ${query.terms.join("; ")}`, `Match: ${query.operator}`,
-      `Fields: ${query.fields.join(", ")}`,
+    const lines = [paper.searchProvenance ? "Imported by search4paper cross-source" : "Imported by search4paper", `Source: ${paper.url}`, `Venue: ${paper.venueID}`,
+      ...queryNoteLines(query),
       ...(paper.evidence || []).map(hit => `[${hit.field}] ${hit.term}: ${hit.text}`)];
+    if (paper.searchProvenance) {
+      lines.push("Retrieval: cross-source keyword search; only the returned candidates were checked locally.",
+        ...paper.searchProvenance.map(provenanceLine));
+      if (paper.duplicateHint) lines.push(paper.duplicateHint);
+    }
     if (paper.itemType === "journalArticle") {
-      lines.push(`Bibliographic source: ${paper.sourceURL}`, `Journal: ${paper.publicationTitle}`, `ISSN: ${paper.issn}`,
+      lines.push(`Bibliographic source: ${paper.sourceURL || paper.url}`, `Journal: ${paper.publicationTitle}`, `ISSN: ${paper.issn}`,
         `Year basis: ${paper.yearBasis}`, `Publication date: ${paper.date}`);
       for (const field of ["volume", "issue", "pages", "onlineDate", "printDate"]) if (paper[field]) lines.push(`${field}: ${paper[field]}`);
       if (paper.retrievalWarning) lines.push(paper.retrievalWarning);
@@ -602,10 +642,10 @@ var Search4PaperCore = (() => {
       if (paper.retrievalWarning) lines.push(paper.retrievalWarning);
     }
     if (paper.bibtex) lines.push("Source BibTeX:", paper.bibtex);
-    return lines.map(line => `<p>${escapeHTML(line)}</p>`).join("");
+    return lines.map(noteParagraph).join("") + citationNote(paper.citation);
   }
 
   return { FIELDS, ROBOTICS_SOURCES, SYSTEMS_SOURCES, DATABASE_SOURCES, JOURNAL_SOURCES, VENUES, CONFERENCES, CONFERENCE_CATEGORIES, filterConferences, OPENREVIEW_CONFERENCES, CONFERENCE_NAMES, sourceName, sourceSupport, sourceYearError, venueID, words, phraseMatches, splitTerms, validateQuery, matchPaper, normalizeNote,
-    validateYear, validateMetadata, fetchAccepted, identities, evidenceNote, escapeHTML };
+    validateYear, validateMetadata, fetchAccepted, identities, uniqueDOI, reconcileItemDOI, evidenceNote, additionalSearchEvidence, citationNote, escapeHTML };
 })();
 if (typeof module !== "undefined") module.exports = Search4PaperCore;

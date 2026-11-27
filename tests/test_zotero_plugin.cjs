@@ -17,7 +17,8 @@ const fetchWith = request => core.fetchAccepted(2026, { request });
 test('selecting current results enables import for all supported conferences', () => {
   const controls = new Map(['fetch', 'refresh-papers', 'conference', 'cancel', 'filter', 'import', 'select-page', 'clear',
     'enrich-abstracts', 'previous', 'next', 'source', 'tab-search', 'tab-discovery', 'tab-fulltext', 'fulltext-cancel',
-    'discovery-cancel','discovery-import','discovery-source','tab-materials','materials-cancel','materials-save'].map(id => [id, {}]));
+    'discovery-cancel','discovery-import','discovery-source','discovery-pick','tab-materials','materials-cancel','materials-save',
+    'cross-search','cross-more','enrich-citations','export-selected','citation-source'].map(id => [id, {}]));
   const context = { window: { arguments: [{ Zotero: {} }], addEventListener() {} },
     document: { querySelectorAll: () => [...controls.values()] } };
   vm.runInNewContext(readFileSync(require.resolve('../zotero-plugin/content/search.js'), 'utf8'), context);
@@ -512,7 +513,7 @@ function workflowUI(Zotero = {}, importer = {}, ieee = {status: '尚未验证', 
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {value: '', textContent: '', disabled: false,
-      setAttribute(name, value) { this[name] = value; }, classList: {toggle() {}}});
+      setAttribute(name, value) { this[name] = value; }, classList: {toggle() {}, add() {}, remove() {}}});
     return elements.get(id);
   };
   const scope = {URL, AbortController, Option: function(text,value){this.text=text;this.value=value;}, Search4PaperCore: core, Search4PaperImport: importer,
@@ -644,6 +645,49 @@ test('full-text retrieval supports arbitrary existing items without a login or p
   assert.equal(calls, 1); assert.match(ui.$('fulltext-status').textContent, /未处理 1/);
   selected.length = 0;
   await assert.rejects(() => ui.getFullText(new AbortController().signal), /主窗口选择/);
+});
+
+test('full-text retrieval keeps known OpenReview object URLs when title resolution fails or finds no note', async () => {
+  const stable = 'https://openreview.net/pdf/13e0ada71319f2a794bfa3f538461b6b12bffd6f.pdf';
+  const note = 'https://openreview.net/pdf?id=qSak1Hjfdq';
+  for (const saved of [true, false]) {
+    for (const lookupFails of [true, false]) {
+      const fields = {title:'ICLR paper',url:'https://openreview.net/forum?id=qSak1Hjfdq',
+        extra:saved ? `Full Text URL: ${stable}` : ''};
+      const item = {id:1,libraryID:1,isRegularItem:()=>true,getField:key=>fields[key]||''};
+      const calls = [];
+      const importer = {openReviewPDFURL:()=>note,async findPDFs(_z, _results, options) {
+        calls.push(options.direct);
+        return [{title:fields.title,hasPDF:options.direct===stable,error:options.direct===stable?'':'HTTP 403'}];
+      }};
+      const openreview = {URLs:async()=>{if(lookupFails)throw Error('HTTP 503');return [note];}};
+      const ui = workflowUI({getActiveZoteroPane:()=>({getSelectedItems:()=>[item]}),Libraries:{get:()=>({filesEditable:true})}},
+        importer,undefined,undefined,undefined,openreview);
+      if(!saved)ui.lastImport={results:[{item,paper:{title:fields.title,pdfURL:stable}}]};
+      await ui.getFullText(new AbortController().signal);
+      assert.deepEqual(calls,[stable]);
+      assert.equal(ui.lastPDFs[0].hasPDF,true);
+      assert.equal(ui.lastPDFs[0].error,'');
+    }
+  }
+});
+
+test('fresh OpenReview object URLs precede stored versions, and duplicate candidates run once', async () => {
+  const saved = 'https://openreview.net/pdf/1111111111111111111111111111111111111111.pdf';
+  const fresh = 'https://openreview.net/pdf/2222222222222222222222222222222222222222.pdf';
+  const note = 'https://openreview.net/pdf?id=Note123';
+  const fields = {title:'Paper',extra:`Full Text URL: ${saved}`,url:note};
+  const item = {id:1,libraryID:1,isRegularItem:()=>true,getField:key=>fields[key]||''};
+  const calls = [];
+  const ui = workflowUI({getActiveZoteroPane:()=>({getSelectedItems:()=>[item]}),Libraries:{get:()=>({filesEditable:true})}},
+    {openReviewPDFURL:()=>note,async findPDFs(_z, _results, options) {
+      calls.push(options.direct);return [{title:fields.title,hasPDF:false,error:'HTTP 403'}];
+    }},undefined,undefined,undefined,{URLs:async()=>[fresh,note]});
+  ui.lastImport={results:[{item,paper:{title:fields.title,pdfURL:saved}}]};
+  await ui.getFullText(new AbortController().signal);
+  assert.deepEqual(calls,[fresh,saved,note,false]);
+  assert.equal(ui.lastPDFs[0].hasPDF,false);
+  assert.match(ui.lastPDFs[0].error,/HTTP 403/);
 });
 
 test('search import creates bibliographic items without invoking PDF retrieval', async () => {
@@ -850,11 +894,14 @@ test('abstract enrichment updates cache and an unambiguous existing Zotero item 
     PathUtils:{join:(...parts)=>parts.join('/')},IOUtils:{writeJSON:async(_path,value)=>{written=value;}}
   });
   const paper={id:'one',year:2026,venueID:'ICML.cc/2026/Conference',title:'Paper',authors:['Ada Example'],abstract:'',doi:'10.1000/example',url:'https://example.org'};
+  paper.citation={source:'OpenAlex',status:'matched',count:0,retrievedAt:'2026-11-27T03:00:00Z'};
   const candidate={...paper,evidence:[]};ui.papers=[paper];ui.candidates=[candidate];ui.selected.add(ui.paperKey(candidate));ui.loadedTargets=[{conference:'ICML',year:2026}];
   ui.coverageRows=[{conference:'ICML',year:2026,fetchedAt:'2026-01-01T00:00:00Z',missingAbstracts:1}];ui.query={};ui.filterPapers=async()=>{};
   await ui.enrichAbstracts(new AbortController().signal);
   assert.equal(paper.abstract,'Resolved abstract');assert.equal(candidate.abstract,'Resolved abstract');assert.equal(fields.abstractNote,'Resolved abstract');assert.equal(saves,1);
   assert.equal(written.papers[0].abstractSource,'Semantic Scholar');assert.equal(ui.coverageRows[0].missingAbstracts,0);
+  assert.equal(written.papers[0].citation,undefined,'Session citation data must not leak into a complete source cache');
+  assert.equal(paper.citation.count,0,'Writing abstracts must preserve the current citation display');
 });
 
 test('saved OpenReview items recover direct PDFs without any recent import or cached paper metadata',async()=>{

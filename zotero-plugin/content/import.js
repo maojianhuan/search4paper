@@ -47,10 +47,11 @@ var Search4PaperImport = {
         const conference = Search4PaperCore.VENUES.find(name => Search4PaperCore.venueID(name, paper.year) === paper.venueID);
         const journal = Search4PaperCore.JOURNAL_SOURCES[conference];
         const conferenceName = Search4PaperCore.CONFERENCE_NAMES[conference];
-        if (!journal && !conferenceName) throw new Error(`不支持导入此会议或期刊：${paper.venueID}`);
-        const item = created ? new Zotero.Item(journal ? "journalArticle" : "conferencePaper") : [...matches.values()][0];
+        const openAlex = paper.source === "openalex" && /^W\d+$/.test(paper.openalexID || "")
+          && ["journalArticle", "conferencePaper", "preprint", "document"].includes(paper.itemType);
+        if (!journal && !conferenceName && !openAlex) throw new Error(`不支持导入此会议或期刊：${paper.venueID}`);
+        const item = created ? new Zotero.Item(openAlex ? paper.itemType : journal ? "journalArticle" : "conferencePaper") : [...matches.values()][0];
         await Zotero.DB.executeTransaction(async () => {
-          if (collection && !collection.id) await collection.save();
           if (created) {
             item.libraryID = libraryID;
             item.setField("title", paper.title);
@@ -59,7 +60,13 @@ var Search4PaperImport = {
             item.setField("url", paper.url);
             item.setField("DOI", paper.doi);
             if (["ICDE", "IJCAI", "ACM MM", "IROS", "ICRA"].includes(conference) || (Search4PaperCore.DATABASE_SOURCES[conference] || Search4PaperCore.SYSTEMS_SOURCES[conference])) item.setField("conferenceName", conferenceName);
-            if (journal) {
+            if (openAlex) {
+              if (paper.itemType === "journalArticle") item.setField("publicationTitle", paper.publicationTitle);
+              if (paper.itemType === "conferencePaper") item.setField("proceedingsTitle", paper.publicationTitle);
+              if (paper.date) item.setField("date", paper.date);
+              if (paper.itemType === "journalArticle" && paper.issn) item.setField("ISSN", paper.issn);
+            }
+            else if (journal) {
               item.setField("publicationTitle", journal.title);
               item.setField("journalAbbreviation", conference);
               item.setField("ISSN", paper.issn);
@@ -71,27 +78,54 @@ var Search4PaperImport = {
               if (paper.date) item.setField("date", paper.date);
               if (paper.pages) item.setField("pages", paper.pages);
             }
-            const identity = paper.source && paper.source !== "openreview"
+            const identity = openAlex ? `OpenAlex ID: ${paper.openalexID}` : paper.source && paper.source !== "openreview"
               ? `Source ID: ${paper.source}:${paper.id}` : `OpenReview ID: ${paper.id}`;
-            item.setField("extra", [identity, paper.pdfURL ? `Full Text URL: ${paper.pdfURL}` : ""].filter(Boolean).join("\n"));
+            item.setField("extra", [...new Set([identity, ...(paper.searchProvenance ? (paper.extra || "").split("\n") : []),
+              paper.openalexID ? `OpenAlex ID: ${paper.openalexID}` : "", paper.pdfURL ? `Full Text URL: ${paper.pdfURL}` : ""].filter(Boolean))].join("\n"));
             // Preserve source author names without guessing surnames.
             item.setCreators(paper.authors.map(name => ({ lastName: name, fieldMode: 1, creatorType: "author" })));
           }
+          Search4PaperCore.reconcileItemDOI(item, keys);
           if (paper.source === "icde") {
             const extra = item.getField("extra");
             const sourceLine = `Official URL: ${paper.sourceURL}`;
             if (!extra.split("\n").includes(sourceLine)) item.setField("extra", [extra, sourceLine].filter(Boolean).join("\n"));
           }
+          if (!created && paper.searchProvenance) {
+            const extra = item.getField("extra");
+            const existingLines = new Set(extra.split("\n"));
+            const additions = [...new Set((paper.extra || "").split("\n"))].filter(line => line && !existingLines.has(line));
+            if (additions.length) item.setField("extra", [extra, ...additions].filter(Boolean).join("\n"));
+          }
+          if (collection && !collection.id) await collection.save();
           if (collection) item.addToCollection(collection.id);
           for (const tag of tags) item.addTag(tag);
           await item.save();
           const notes = created ? [] : await Zotero.Items.getAsync(item.getNotes());
-          if (!notes.some(note => note.getNote().includes("<p>Imported by search4paper</p>"))) {
+          const marker = paper.searchProvenance ? "<p>Imported by search4paper cross-source</p>" : "<p>Imported by search4paper</p>";
+          const savedNote = notes.find(note => note.getNote().includes(marker));
+          if (!savedNote) {
             const note = new Zotero.Item("note");
             note.libraryID = libraryID;
             note.parentID = item.id;
             note.setNote(Search4PaperCore.evidenceNote(paper, query));
             await note.save();
+          }
+          else if (paper.searchProvenance) {
+            const html = savedNote.getNote();
+            const added = Search4PaperCore.additionalSearchEvidence(html, paper.searchProvenance, query);
+            if (added) {
+              const afterTitle = html.indexOf(marker) + marker.length;
+              savedNote.setNote(html.slice(0, afterTitle) + added + html.slice(afterTitle));
+              await savedNote.save();
+            }
+          }
+          if (savedNote && paper.citation) {
+            const citation = Search4PaperCore.citationNote(paper.citation);
+            if (!savedNote.getNote().includes(citation)) {
+              savedNote.setNote(savedNote.getNote() + citation);
+              await savedNote.save();
+            }
           }
         });
         addIndex(keys, item);

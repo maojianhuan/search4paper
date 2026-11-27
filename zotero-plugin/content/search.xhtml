@@ -16,6 +16,10 @@
   <script src="openreview.js"></script>
   <script src="abstract.js"></script>
   <script src="discovery.js"></script>
+  <script src="citations.js"></script>
+  <script src="cross-search.js"></script>
+  <script src="vendor/cytoscape-3.35.0.min.js"></script>
+  <script src="discovery-graph.js"></script>
   <script src="materials.js"></script>
   <script src="search.js" defer="defer"></script>
 </head>
@@ -65,24 +69,42 @@
     <p><strong>当前条件：</strong><span id="query-expression"></span></p>
     <p id="field-rule"></p>
   </div>
+  <details id="cross-search-options">
+    <summary>跨来源搜索 · 按关键词分页获取候选</summary>
+    <div class="toolbar">
+      <label>OpenAlex 范围 <select id="cross-openalex"><option value="all">不限会议／期刊</option><option value="journals">仅所选期刊（按 ISSN）</option><option value="off">不查询 OpenAlex</option></select></label>
+      <button id="cross-search" class="primary">跨来源搜索</button>
+      <button id="cross-more" disabled="disabled">继续加载候选</button>
+    </div>
+    <p class="hint">使用上方关键词、字段和年份；所选来源用于本地名单与 OpenReview 官方查询。OpenAlex“不限会议／期刊”覆盖目录以外来源。仅读取现有名单和分页候选，全文按需获取。</p>
+    <p id="cross-plan" class="hint" role="status"></p>
+    <p class="hint">OpenAlex Key 与“文献发现”页共用。远程搜索规则与本地词前缀匹配可能不同；结果逐条本地复核，但不能保证召回完整名单中的全部命中。更改条件后请重新跨来源搜索。</p>
+  </details>
   <p id="coverage" class="coverage">优先读取本地名单；会议查询录用论文，期刊查询已出版书目。首次检索联网获取并保存，需要更新时点击“刷新名单”。</p>
   <div class="workspace">
     <section class="candidates" aria-label="候选论文">
       <div class="toolbar"><strong id="count">候选论文 0 篇</strong><span id="selection">已选 0 篇</span>
         <button id="select-page" disabled="disabled">选中本页</button><button id="clear" disabled="disabled">清空选择</button>
-        <button id="enrich-abstracts" disabled="disabled">补全选中摘要</button></div>
-      <div class="table-scroll"><table><thead><tr><th scope="col">选择</th><th scope="col">论文标题 / 命中字段</th></tr></thead><tbody id="results"></tbody></table>
+        <button id="enrich-abstracts" disabled="disabled">补全选中摘要</button>
+        <button id="enrich-citations" disabled="disabled">查询选中引用数</button>
+        <button id="export-selected" disabled="disabled">导出选中结果</button>
+        <label>排序 <select id="result-sort"><option value="source">来源顺序</option><option value="cited-desc">引用数降序</option><option value="cited-asc">引用数升序</option></select></label></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">选择</th><th scope="col">论文标题 / 命中字段</th><th scope="col">OpenAlex 引用数</th></tr></thead><tbody id="results"></tbody></table>
         <p id="empty">点击标题预览，勾选后导入。</p></div>
       <div class="pagination"><button id="previous" disabled="disabled">上一页</button><span id="page">0 / 0</span><button id="next" disabled="disabled">下一页</button></div>
     </section>
     <section class="preview" aria-label="论文预览">
       <h2 id="paper-title">论文预览</h2><p id="authors" class="hint"></p>
       <p id="publication-info" class="hint" hidden="hidden"></p>
+      <p id="citation-info" class="hint"></p>
+      <p><button id="citation-source" disabled="disabled">打开引用数据来源</button></p>
       <p><button id="source" disabled="disabled">打开论文来源</button></p>
       <h3>摘要</h3><p id="abstract">选择一篇候选论文。</p>
       <h3>命中依据</h3><ul id="evidence"></ul>
+      <details id="search-provenance-panel" hidden="hidden"><summary>检索来源与版本线索</summary><p id="search-provenance" class="hint"></p></details>
     </section>
   </div>
+  <p class="hint">引用数按 OpenAlex 工作记录统计，未知值排在最后。仅查询选中论文，结果保留在当前检索中，可导出 JSON 或随导入保存为来源笔记。Key 沿用“文献发现”页设置。</p>
   <section class="destination" aria-label="导入位置">
     <label class="grow">导入到我的文献库 <select id="collection"><option value="">我的文献库（根目录）</option></select></label>
     <button id="refresh">刷新集合</button>
@@ -100,23 +122,54 @@
       <span id="openalex-quota" class="hint">尚未读取额度。</span>
     </div>
     <p class="hint">免费 Key 可提高每日额度；Key 仅保存在本机 Zotero 配置中。修改后点击“保存 Key”。</p>
+    <p class="hint">勾选“深入发现”可沿共同参考文献与共同引用者扩展二跳候选，并补充共被引证据；会增加查询时间。每篇种子两条路径各最多新增 100 篇候选，统计仅代表已采集范围。</p>
     <div class="toolbar discovery-filters"><button id="discover" class="primary">扩展相关文献</button>
-      <label>关系 <select id="discovery-relation"><option value="">全部</option><option value="reference">参考文献</option><option value="citation">后续引用</option><option value="related">相关论文</option></select></label>
+      <label><input id="discovery-deep" type="checkbox" />深入发现</label>
+      <label>关系 <select id="discovery-relation"><option value="">全部</option><option value="reference">参考文献</option><option value="citation">后续引用</option><option value="related">相关论文</option><option value="coupling">共享参考文献</option><option value="cocitation">共同被引用</option></select></label>
       <label>年份 <input id="discovery-year-from" inputmode="numeric" placeholder="起始" /></label><span>–</span><label><input id="discovery-year-to" inputmode="numeric" placeholder="结束" /></label>
       <label>类型 <select id="discovery-type"><option value="">全部</option><option value="journal">期刊</option><option value="conference">会议</option><option value="preprint">预印本</option><option value="other">其他</option></select></label>
       <label>库内状态 <select id="discovery-library"><option value="">全部</option><option value="new">尚未导入</option><option value="existing">已在库、无 PDF</option><option value="pdf">已在库、有 PDF</option></select></label>
       <label><input id="discovery-oa" type="checkbox" />仅开放全文</label>
       <label>排序 <select id="discovery-sort"><option value="recommended">综合推荐</option><option value="latest">最新发表</option><option value="cited">引用最多</option><option value="seeds">关联种子最多</option></select></label>
-      <button id="discovery-select">选中当前结果</button><button id="discovery-clear">清空选择</button>
+      <button id="discovery-select" title="选择全部筛选结果，包括超出图谱显示上限的候选">选中当前结果</button><button id="discovery-clear">清空选择</button>
       <button id="discovery-import" disabled="disabled">导入到主窗口当前集合</button>
       <button id="discovery-cancel" disabled="disabled">取消</button></div>
     <p id="discovery-summary" class="coverage">尚未扩展种子论文。</p>
-    <div class="workspace">
-      <section class="candidates"><div class="table-scroll"><table><thead><tr><th>选择</th><th>相关论文 / 推荐原因</th></tr></thead><tbody id="discovery-results"></tbody></table>
+    <div class="toolbar discovery-view-switch" aria-label="文献发现视图">
+      <button id="discovery-list-view" aria-pressed="true">列表</button>
+      <button id="discovery-graph-view" aria-pressed="false">图谱</button>
+      <span class="hint">两个视图共用筛选条件与待导入选择；点击论文查看详情。</span>
+    </div>
+    <div id="discovery-workspace" class="workspace">
+      <section id="discovery-list" class="candidates"><div class="table-scroll"><table><thead><tr><th>选择</th><th>相关论文 / 推荐原因</th></tr></thead><tbody id="discovery-results"></tbody></table>
         <p id="discovery-empty">点击“扩展相关文献”开始。</p></div></section>
+      <section id="discovery-graph-panel" hidden="hidden">
+        <div class="toolbar discovery-graph-options">
+          <label><input id="graph-citations" type="checkbox" checked="checked" />引用</label>
+          <label><input id="graph-related" type="checkbox" checked="checked" />OpenAlex 推荐</label>
+          <label><input id="graph-coupling" type="checkbox" checked="checked" />共同参考文献</label>
+          <label><input id="graph-cocitation" type="checkbox" checked="checked" />共被引（采集范围内）</label>
+          <label>连线相似度 ≥ <input id="graph-threshold" type="number" min="0" max="1" step="0.05" value="0.1" /></label>
+          <label>选点 <select id="graph-selection"><option value="similarity">与种子的联合相似度</option><option value="list">沿用列表顺序</option></select></label>
+          <label>最多候选 <select id="graph-limit"><option value="50">50</option><option value="100" selected="selected">100</option><option value="200">200</option></select></label>
+        </div>
+        <div class="toolbar">
+          <button id="graph-zoom-in" aria-label="放大图谱">放大</button><button id="graph-zoom-out" aria-label="缩小图谱">缩小</button>
+          <button id="graph-fit">适应画布</button><button id="graph-layout">重新布局</button>
+          <span class="hint">拖动节点或空白处，滚轮缩放；点击连线查看依据。</span>
+        </div>
+        <div id="discovery-graph" role="img" aria-label="论文关系网络；可切换到列表阅读并选择论文"></div>
+        <p class="hint graph-legend">实线箭头：引用 → 被引用；紫色点线：OpenAlex 推荐；蓝色虚线：共同参考文献；绿色虚线：共被引。虚线越粗，对应信号越强。</p>
+        <p class="hint graph-legend">联合分数 =（参考文献 Jaccard + 已采集共同引用者 Jaccard）/ 2，多种子取最高分。连线阈值分别作用于蓝色和绿色连线；隐藏连线不改变选点分数。</p>
+        <p id="graph-node-legend" class="hint graph-legend">菱形为种子；已知被引数按对数缩放节点；引用未知的节点使用固定尺寸、虚线边框及文字标记。颜色由浅到深表示早到晚，灰色为年份未知。绿色边框：已有 PDF；橙色边框：待导入。</p>
+        <p id="graph-summary" class="coverage" role="status">尚未扩展种子论文。</p>
+      </section>
       <section class="preview"><h2 id="discovery-title">论文预览</h2><p id="discovery-authors" class="hint"></p>
+        <p><label><input id="discovery-pick" type="checkbox" disabled="disabled" />加入待导入选择</label><span id="discovery-seed-label" class="hint" hidden="hidden">这是已选的种子论文，不重复导入。</span></p>
         <p><button id="discovery-source" disabled="disabled">打开论文来源</button></p><h3>摘要</h3><p id="discovery-abstract">选择一篇相关论文。</p>
-        <h3>推荐依据</h3><ul id="discovery-reasons"></ul></section>
+        <h3>推荐依据</h3><ul id="discovery-reasons"></ul>
+        <section id="discovery-edge-info" hidden="hidden"><h3>连线依据</h3><p id="discovery-edge-description"></p><ul id="discovery-edge-evidence"></ul></section>
+      </section>
     </div>
     <p id="discovery-status" class="operation-status" role="status" aria-live="polite">就绪</p>
   </section>
